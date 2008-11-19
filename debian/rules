@@ -1,0 +1,34 @@
+#!/usr/bin/make -f
+# based on http://www.debian.org/doc/maint-guide/ch-dreq.en.html
+
+DESTDIR = $(shell pycentral pycentraldir gonium)/gonium/
+
+.PHONY: clean binary-indep binary-arch build install
+
+build:
+
+clean:
+	rm -rf debian/tmp
+
+install: src/*
+	dh_testdir
+	dh_testroot
+	dh_clean -k
+	dh_installdirs
+	mkdir -p debian/tmp/${DESTDIR}/fd_management
+	cp -a src/*py debian/tmp/${DESTDIR}/
+	cp -a src/fd_management/*py debian/tmp/${DESTDIR}/fd_management/
+
+binary: binary-arch binary-indep
+
+binary-arch:
+
+binary-indep: install
+	dh_testdir
+	dh_testroot
+	dh_fixperms
+	dh_pycentral
+	dh_installdeb
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb
