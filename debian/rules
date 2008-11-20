@@ -1,7 +1,8 @@
 #!/usr/bin/make -f
 # based on http://www.debian.org/doc/maint-guide/ch-dreq.en.html
 
-DESTDIR = $(shell pycentral pycentraldir gonium)/gonium/
+PKGNAME = gonium
+TARGETDIR = debian/${PKGNAME}/usr/share/pyshared/${PKGNAME}/
 
 .PHONY: clean binary-indep binary-arch build install
 
@@ -15,9 +16,8 @@ install: src/*
 	dh_testroot
 	dh_clean -k
 	dh_installdirs
-	mkdir -p debian/tmp/${DESTDIR}/fd_management
-	cp -a src/*py debian/tmp/${DESTDIR}/
-	cp -a src/fd_management/*py debian/tmp/${DESTDIR}/fd_management/
+	mkdir -p ${TARGETDIR}
+	cp -r src/* ${TARGETDIR}
 
 binary: binary-arch binary-indep
 
