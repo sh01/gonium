@@ -2,7 +2,7 @@
 # based on http://www.debian.org/doc/maint-guide/ch-dreq.en.html
 
 PKGNAME = gonium
-TARGETDIR = debian/${PKGNAME}/usr/share/pyshared/${PKGNAME}/
+TARGETDIR = debian/${PKGNAME}/usr/lib/python2.5/site-packages/${PKGNAME}/
 
 .PHONY: clean binary-indep binary-arch build install
 
@@ -17,7 +17,7 @@ install: src/*
 	dh_clean -k
 	dh_installdirs
 	mkdir -p ${TARGETDIR}
-	cp -r src/* ${TARGETDIR}
+	cp -a src/* ${TARGETDIR}
 
 binary: binary-arch binary-indep
 
@@ -27,7 +27,7 @@ binary-indep: install
 	dh_testdir
 	dh_testroot
 	dh_fixperms
-	dh_pycentral
+	dh_pysupport
 	dh_installdeb
 	dh_gencontrol
 	dh_md5sums
