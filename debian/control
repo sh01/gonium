@@ -6,7 +6,7 @@ Standards-Version: 3.6.2
 Build-Depends: debhelper
 XS-Python-Version: 2.4, 2.5
 
-Package: gonium
+Package: python-gonium
 Architecture: all
 Depends: python (>= 2.4)
 XB-Python-Version: ${python:Versions}

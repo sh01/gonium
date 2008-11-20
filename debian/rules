@@ -2,7 +2,7 @@
 # based on http://www.debian.org/doc/maint-guide/ch-dreq.en.html
 
 PKGNAME = gonium
-TARGETDIR = debian/${PKGNAME}/usr/lib/python2.5/site-packages/${PKGNAME}/
+TARGETDIR = debian/python-${PKGNAME}/usr/lib/python2.5/site-packages/${PKGNAME}/
 
 .PHONY: clean binary-indep binary-arch build install
 
