@@ -31,6 +31,7 @@ import ctypes
 import socket
 import struct
 import sys
+import time
 from socket import SOL_IP
 SOL_IPV6 = 41
 
@@ -404,6 +405,12 @@ class XTEntry_ARP(XTEntry_Base):
       'FORWARD', #2
    )
 
+class XTGEContainer:
+   def __init__(self, xtge, ts_low, ts_high):
+      self.xtge = xtge
+      self.ts_low = ts_low
+      self.ts_high = ts_high
+
 
 class XTGetEntries_Base:
    __fields__ = ('name', 'entries')
@@ -510,20 +517,23 @@ class XTables:
    def get_info(self, table):
       """Retrieve xt_getinfo data and deserialize"""
       data = self.getsockopt(self.SO_GET_INFO, table, self.xtgi.fmt_size)
-      self.xtgi = self.xtgi.build_from_bindata(data)
+      return self.xtgi.build_from_bindata(data)
    
-   def get_entries(self, table):
-      size = self.xtgi.size
+   def get_entries(self, table, xtgi):
+      size = xtgi.size
+      ts_low = time.time()
       data = self.getsockopt(self.SO_GET_ENTRIES, struct.pack(self.xtge.fmts, table, size), self.xtge.fmts_size + size)
-      return self.xtge.build_from_bindata(self.xtgi, data)
+      ts_high = time.time()
+      return XTGEContainer(self.xtge.build_from_bindata(xtgi, data), ts_low, ts_high)
    
    def table_read(self, table):
-      self.get_info(table)
-      ige = self.get_entries(table)
-      return ige
+      xtgi = self.get_info(table)
+      xtgec = self.get_entries(table, xtgi)
+      return xtgec
    
    def close(self):
       self.sock.close()
+
 
 class XTablesIP(XTables):
    af = socket.AF_INET
@@ -573,7 +583,9 @@ if (__name__ == '__main__'):
    for cls in (XTablesIP, XTablesIP6, XTablesARP):
       NI = cls()
       print('------------------------------------------------ cls: %s' % (cls,))
-      xtge = NI.table_read(tablename)
+      xtgec = NI.table_read(tablename)
+      xtge = xtgec.xtge
+      print('----- retrieved: %f %f' % (xtgec.ts_low, xtgec.ts_high))
       for ie in xtge.entries:
          #pprint.pprint((ie.fields_get(), ie.target_get()))
          print(int(ie.is_chainstart()), ie.target, ie.target_data, ie.counter_packets, ie.counter_bytes)
