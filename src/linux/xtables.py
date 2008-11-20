@@ -36,6 +36,8 @@ from socket import SOL_IP
 SOL_IPV6 = 41
 
 from gonium.ip_address import IPAddressV4, IPAddressV6
+from gonium.event_multiplexing import EventMultiplexer
+from gonium.fd_management import Timer
 
 NF_IP_NUMHOOKS = 5
 NF_IP6_NUMHOOKS = 5
@@ -572,14 +574,41 @@ class XTablesARP(XTables):
    SO_GET_REVISION_TARGET = BASE_CTL + 3
 
 
+class XTablesPoller:
+   def __init__(self, ed, interval, xt=None, tables=('filter',)):
+      if (xt is None):
+         xt = XTablesIP()
+      self.em_xtentries = EventMultiplexer(self)
+      self.ed = ed
+      self.xt = xt
+      self.tables = tables
+      self.timer = Timer(ed, interval, self.xt_poll, persistence=True, align=True, parent=self)
+   
+   def xt_poll(self):
+      for table in self.tables:
+         self.em_xtentries(self.xt.table_read(table))
+
+
 if (__name__ == '__main__'):
    import pprint
    import sys
+
+   import logging
+   logger = logging.getLogger()
+   log = logger.log
+   logger.setLevel(0)
+   formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')
+   handler_stderr = logging.StreamHandler()
+   handler_stderr.setLevel(30)
+   handler_stderr.setFormatter(formatter)
+   logger.addHandler(handler_stderr)
+
    try:
       tablename = sys.argv[1]
    except IndexError:
       tablename = 'filter'
    
+   print('=== Testing: XTables ===')
    for cls in (XTablesIP, XTablesIP6, XTablesARP):
       NI = cls()
       print('------------------------------------------------ cls: %s' % (cls,))
@@ -591,3 +620,18 @@ if (__name__ == '__main__'):
          print(int(ie.is_chainstart()), ie.target, ie.target_data, ie.counter_packets, ie.counter_bytes)
       pprint.pprint(xtge.get_chains())
       NI.close()
+   
+   print('\n=== Testing: XTablesPoller ===')
+   from gonium.fd_management import EventDispatcherPoll
+   
+   def quit_print(*args, **kwargs):
+      print((args, kwargs))
+      ed.shutdown()
+
+   ed = EventDispatcherPoll()
+   xtp = XTablesPoller(ed, 1)
+   xtp.em_xtentries.EventListener(quit_print)
+   ed.event_loop()
+   
+   print('\n=== All tests passed. ===')
+
