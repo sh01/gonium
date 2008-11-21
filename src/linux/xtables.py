@@ -25,7 +25,11 @@
 # Moreover, in a HLL such an implementation is possible with a reasonable
 # amount of effort.
 # This module attempts to be such an implementation.
-# It is currently in an early stage of development.
+#
+# It should now be stable for reading xtables data, though note that it can't
+# parse match or target *data* (match/target names are available, and so is
+# the raw data associated with them, there just isn't any code for further
+# parsing the latter).
 
 import ctypes
 import socket
@@ -165,13 +169,12 @@ class BinPacker(dict):
       self.field_add('iface_out_mask', ifnamsiz, '', cstring_trim)
       
    def xte_fields_add2(self):
-      self.field_add(None, '0L') #inner struct alignment
       self.field_add('offset_target', 'H', '')
       self.field_add('offset_next', 'H', '')
       self.field_add('comefrom', 'I', '>')
       self.field_add('counter_packets', 'Q', '')
       self.field_add('counter_bytes', 'Q', '')
-      self.field_add(None, '0L') #outer struct alignment
+      self.field_add(None, '0Q') #outer struct alignment
 
    @classmethod
    def build_xte_ip(cls):
@@ -184,6 +187,7 @@ class BinPacker(dict):
       self.field_add('proto', 'H', '>')
       self.field_add('flags', 'B', '')
       self.field_add('invflags', 'B', '')
+      self.field_add(None, '0I')
       self.field_add('nfcache', 'I', '>')
       self.xte_fields_add2()
       return self
@@ -203,6 +207,7 @@ class BinPacker(dict):
       self.field_add('tos', 'B', '')
       self.field_add('flags', 'B', '')
       self.field_add('invflags', 'B', '')
+      self.field_add(None, '0I')
       self.field_add('nfcache', 'I', '>')
       self.xte_fields_add2()
       return self
@@ -230,6 +235,7 @@ class BinPacker(dict):
       self.xte_fields_add1()
       self.field_add('flags', 'B', '')
       self.field_add('invflags', 'H', '')
+      self.field_add(None, '0I')
       self.xte_fields_add2()
       return self
    
@@ -327,7 +333,7 @@ class XTEntry_Base:
    
    def _verdict_get(self):
       """Return verdict data"""
-      (verdict,) = struct.unpack('i', self.target_data)
+      (verdict,) = struct.unpack('i0Q', self.target_data)
       return verdict
    
    def _target_get(self):
@@ -416,7 +422,7 @@ class XTGEContainer:
 
 class XTGetEntries_Base:
    __fields__ = ('name', 'entries')
-   fmts = '%ssI' % (XT_TABLE_MAXNAMELEN,)
+   fmts = '%ssI0Q' % (XT_TABLE_MAXNAMELEN,)
    fmts_size = struct.calcsize(fmts)
    
    def __init__(self, name, entries):
