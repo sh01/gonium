@@ -23,7 +23,7 @@ setup(name='gonium',
    author='Sebastian Hagen',
    author_email='sebastian_hagen@memespace.net',
    url='http://git.memespace.net/git/gonium.git',
-   packages=('gonium', 'gonium.fd_management', 'gonium.linux'),
+   packages=('gonium', 'gonium.fd_management', 'gonium.posix', 'gonium.linux'),
    package_dir={'gonium':'src'}
 )
 
