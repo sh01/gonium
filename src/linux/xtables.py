@@ -30,6 +30,7 @@
 # parse match or target *data* (match/target names are available, and so is
 # the raw data associated with them, there just isn't any code for further
 # parsing the latter).
+# Depends on ctypes, libc and gonium.
 
 import ctypes
 import socket
