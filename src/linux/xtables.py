@@ -325,6 +325,9 @@ class XTEntry_Base:
    def is_chainstart(self):
       return bool(self.hook_entry or (cstring_trim(self.target_name) == 'ERROR'))
    
+   def get_target_str(self):
+      return cstring_trim(self.target_name)
+   
    def get_chain_name(self):
       if not self.is_chainstart():
          return self.chain
