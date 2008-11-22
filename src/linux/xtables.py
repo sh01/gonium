@@ -511,7 +511,7 @@ class XTGetEntries_ARP(XTGetEntries_Base):
 
 class XTables:
    def __init__(self):
-      self.sock = socket.socket(self.af, socket.SOCK_RAW, socket.IPPROTO_RAW)
+      self.sock = socket.socket(self.af, socket.SOCK_DGRAM)
 
    def getsockopt(self, optname, optval, optlen):
       """Getsockopt wrapper with initial-optname support"""
