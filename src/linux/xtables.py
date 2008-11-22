@@ -33,7 +33,6 @@
 # Depends on ctypes, libc and gonium.
 
 import ctypes
-import datetime
 import socket
 import struct
 import sys
@@ -426,7 +425,7 @@ class XTGEContainer:
    
    def datetime_get(self):
       ts_avg = 0.5*(self.ts_low + self.ts_high)
-      return datetime.datetime.utcfromtimestamp(ts_avg)
+      return ts_avg
 
 
 class XTGetEntries_Base:
