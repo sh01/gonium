@@ -423,7 +423,7 @@ class XTGEContainer:
       self.ts_low = ts_low
       self.ts_high = ts_high
    
-   def datetime_get(self):
+   def ts_get(self):
       ts_avg = 0.5*(self.ts_low + self.ts_high)
       return ts_avg
 
