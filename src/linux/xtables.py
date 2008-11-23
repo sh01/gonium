@@ -279,7 +279,8 @@ class XTEntry_Match:
    
    def data_get(self):
       return self.xtentry.data[self.offset+self.bp.size_get():self.offset+self.size]
-   
+   def data_get_str(self):
+      return cstring_trim(self.data_get())
    def __repr__(self):
       return '<%s name %s data %r>' % (self.__class__.__name__, self.name, self.data)
 
