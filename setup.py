@@ -14,11 +14,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
+import sys
 from distutils.core import setup
 
+if (sys.version_info[0] <= 2):
+   raise Exception('This gonium version needs a python >= 3.0') 
+
 setup(name='gonium',
-   version='0.5',
+   version='0.6',
    description='Gonium baselib',
    author='Sebastian Hagen',
    author_email='sebastian_hagen@memespace.net',
