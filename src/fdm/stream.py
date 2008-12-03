@@ -42,12 +42,13 @@ class AsyncDataStream:
    
    def _inbuf_resize(self, new_size=None):
       """Increase size of self.inbuf without discarding data"""
-      if (self._inbuf_size >= self._inbuf_size_max >= 0):
+      if (self._inbuf_size >= self._inbuf_size_max > 0):
          _log(30, 'Closing {0} because buffer limit {0._inbuf_size_max} has been hit.'.format(self))
          self.close()
       if (new_size is None):
          new_size = self._inbuf_size * 2
-      new_size = min(new_size, self._inbuf_size_max)
+      if (self._inbuf_size_max > 0):
+         new_size = min(new_size, self._inbuf_size_max)
       self._inbuf_size = new_size
       inbuf_new = bytearray(new_size)
       inbuf_new[:self._index_in] = self._inbuf[:self._index_in]
@@ -133,13 +134,13 @@ def _selftest(out=None):
          self.i += 1
          if (self.i > self.l):
             als1.close()
-         out.write('{0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs))
+         out.write('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs))
    
    ed = ed_get()()
    out.write('Using ED {0}\n'.format(ed))
    out.write('==== AsyncLineStream test ====\n')
-   sp = Popen(('ping', '127.0.0.1'), stdout=PIPE, stderr=PIPE)
-   als1 = AsyncLineStream(ed, sp.stdout)
+   sp = Popen(('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stderr=PIPE)
+   als1 = AsyncLineStream(ed, sp.stdout, inbufsize_start=1)
    als1.process_input = D1()
    
    ed.event_loop()
