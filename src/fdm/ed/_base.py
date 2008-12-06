@@ -15,10 +15,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import logging
 import fcntl
 import os
 from types import MethodType
 from heapq import heappush
+
+_logger = logging.getLogger('gonium.src.fdm')
+_log = logger.log
 
 class EventDispatcherBase:
    FDC_INITIAL = 16
@@ -76,7 +80,7 @@ class EventDispatcherBase:
 
 
 class FDWrap:
-   __fields__ = ('ed', 'fd', 'process_readability', 'process_writability',
+   __slots__ = ('_ed', 'fd', 'process_readability', 'process_writability',
       'process_hup', 'process_close')
    """FD associated monitored by a specific ED. Events are returned by calling
       attributes:
@@ -91,7 +95,6 @@ class FDWrap:
       self.process_readability = None
       self.process_writability = None
       self.process_hup = self.close
-      self.active = True
       
    # For documentation only
    def read_r(self):
@@ -124,10 +127,14 @@ class FDWrap:
       """Close this fd."""
       if (self._ed._fdwl[self.fd] is self):
          self._ed._fdwl[self.fd] = None
-      self.active = False
+      try:
+         self.process_close()
+      except Exception:
+         _log(40, 'Error in fd-close handler:', exc_info=True)
       self.read_u()
       self.write_u()
       os.close(self.fd)
+      self._ed = None
    def process_close(self):
       """Process FD closing; this implementation does nothing"""
       pass
@@ -140,9 +147,9 @@ class FDWrap:
       return self.fd
    
    def __hash__(self):
-      return hash(self.ed, self.fd, self.active)
+      return hash(self.fd)
    def __bool__(self):
-      return self.active
+      return not (self._ed is None)
    def __eq__(self, other):
       return (self.fd == other.fd)
    def __ne__(self,other):
