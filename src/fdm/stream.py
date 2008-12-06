@@ -27,20 +27,41 @@ _log = _logger.log
 class AsyncDataStream:
    """Class for asynchronously accessing streams of bytes of any kind."""
    def __init__(self, ed, filelike, inbufsize_start:int=1024,
-                inbufsize_max:int=0, size_need:int=0):
+                inbufsize_max:int=0, size_need:int=0, read_r:bool=True):
       self._f = filelike
+      for name in ('recvinto', 'readinto'):
+         try:
+            self._in = getattr(filelike, name)
+         except AttributeError:
+            continue
+         break
+      else:
+         raise ValueError("Unable to find recvinto/readinto method on object {0!a}".format(filelike,))
+      for name in ('send', 'write'):
+         try:
+            self._out = getattr(filelike, name)
+         except AttributeError:
+            continue
+         break
+      else:
+         raise ValueError("Unable to find send/write method on object {0!a}".format(filelike,))
+      
       self._fw = ed.fd_wrap(self._f.fileno())
       self._fw.process_readability = self._process_input0
-      self._fw.read_r()
+      self._fw.process_writability = self._output_write
+      self._fw.process_close = self.process_close
+      if (read_r):
+         self._fw.read_r()
       
       self.size_need = size_need # how many bytes to read before calling input_process2()
       assert(inbufsize_start > 0)
       self._inbuf = bytearray(inbufsize_start)
+      self._outbuf = []
       self._inbuf_size = inbufsize_start
       self._inbuf_size_max = inbufsize_max
       self._index_in = 0        # part of buffer filled with current data
-   
-   def _inbuf_resize(self, new_size=None):
+      
+   def _inbuf_resize(self, new_size:(int, None)=None):
       """Increase size of self.inbuf without discarding data"""
       if (self._inbuf_size >= self._inbuf_size_max > 0):
          _log(30, 'Closing {0} because buffer limit {0._inbuf_size_max} has been hit.'.format(self))
@@ -54,10 +75,36 @@ class AsyncDataStream:
       inbuf_new[:self._index_in] = self._inbuf[:self._index_in]
       self._inbuf = inbuf_new
    
-   def _data_read(self):
+   def send_data(self, buffers:collections.Sequence, flush=True):
+      """Append set of buffers to pending output and attempt to push"""
+      had_pending = bool(self._outbuf)
+      self._outbuf.extend(buffers)
+      if (flush):
+         self._output_write(had_pending)
+   
+   def _output_write(self, _writeregistered=True):
+      """Write output and manage writability notification (un)registering"""
+      i = 0
+      for data in self._outbuf:
+         rv = self._out(data)
+         if (rv < len(data)):
+            # For performance: don't copy data; instead create a memoryview
+            # skipping written data
+            self._outbuf[i] = memoryview(self._outbuf[i])[rv:]
+            break
+         i += 1
+      # discard completely written buffers
+      del(self._outbuf[:i])
+      if ((self._outbuf == []) == _writeregistered):
+         if (_writeregistered):
+            self._fw.write_u()
+         else:
+            self._fw.write_r()
+   
+   def _read_data(self):
       """Read and buffer input from wrapped file-like object"""
       try:
-         br = self._f.readinto(memoryview(self._inbuf)[self._index_in:])
+         br = self._in(memoryview(self._inbuf)[self._index_in:])
       except IOError as exc:
          if (exc.errno == 4):
             # EINTR
@@ -69,7 +116,7 @@ class AsyncDataStream:
    
    def _process_input0(self):
       """Input processing stage 0: read and buffer bytes"""
-      self._data_read()
+      self._read_data()
       if (self._index_in >= self.size_need):
          self._process_input1()
       if (self._index_in >= self._inbuf_size):
@@ -79,7 +126,7 @@ class AsyncDataStream:
       """Override in subclass to insert more handlers"""
       self.process_input(memoryview(self._inbuf)[:self._index_in])
 
-   def inbuf_data_discard(self, bytes:int=None):
+   def discard_inbuf_data(self, bytes:int=None):
       """Discard <bytes> of in-buffered data."""
       if ((bytes is None) or (bytes == self._index_in)):
          self._index_in = 0
@@ -88,6 +135,11 @@ class AsyncDataStream:
          raise ValueError('Asked to discard {0} bytes, but only have {1} in buffer.'.format(bytes, self._index_in))
       self._inbuf[:self._index_in-bytes] = self._inbuf[bytes:self._index_in]
       self._index_in -= bytes
+   
+   def process_close(self):
+      self._in = None
+      self._out = None
+      self._outbuf = None
 
 
 class AsyncLineStream(AsyncDataStream):
@@ -119,7 +171,7 @@ class AsyncLineStream(AsyncDataStream):
          self._process_input2(memoryview(self._inbuf)[line_start:line_end])
          line_start = index_l = line_end
       if (line_start):
-         self.inbuf_data_discard(line_start)
+         self.discard_inbuf_data(line_start)
    
    def _process_input2(self, *args, **kwargs):
       self.process_input(*args, **kwargs)
@@ -144,7 +196,7 @@ def _selftest(out=None):
          if (self.i > self.l):
             als1._fw.close()
             ed.shutdown()
-         out.write('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs))
+         ads_out.send_data(('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs).encode('ascii'),))
    
    ed = ed_get()()
    out.write('Using ED {0}\n'.format(ed))
@@ -152,6 +204,7 @@ def _selftest(out=None):
    sp = Popen(('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stderr=PIPE)
    als1 = AsyncLineStream(ed, sp.stdout, inbufsize_start=1)
    als1.process_input = D1()
+   ads_out = AsyncDataStream(ed, os.fdopen(os.dup(sys.stdout.fileno()),'wb', buffering=0), read_r=False)
    
    ed.event_loop()
    os.kill(sp.pid, signal.SIGKILL)
