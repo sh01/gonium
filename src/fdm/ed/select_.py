@@ -114,7 +114,8 @@ class EventDispatcherPollBase(EventDispatcherBase):
                if (event & POLLHUP):
                   fdw.process_hup()
                if (event & POLLERR):
-                  fdw.process_close()
+                  if (fdw):
+                     fdw.close()
             except CloseFD:
                fdw.close()
             except Exception as exc:
