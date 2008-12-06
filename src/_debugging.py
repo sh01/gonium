@@ -15,13 +15,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# FDM Exceptions.
+# Reusable code for gonium-internal debugging. *Not* in any way a public API.
 
-class FDMException(Exception):
-   pass
+import logging
 
-class CloseFD(FDMException):
-   pass
+sformatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 
-
-
+def streamlogger_setup(ll_out=20, stream=None):
+   logger = logging.getLogger()
+   logger.setLevel(0)
+   handler = logging.StreamHandler(stream)
+   handler.setLevel(ll_out)
+   handler.setFormatter(sformatter)
+   logger.addHandler(handler)

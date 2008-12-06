@@ -56,7 +56,13 @@ class AsyncDataStream:
    
    def _data_read(self):
       """Read and buffer input from wrapped file-like object"""
-      br = self._f.readinto(memoryview(self._inbuf)[self._index_in:])
+      try:
+         br = self._f.readinto(memoryview(self._inbuf)[self._index_in:])
+      except IOError as exc:
+         if (exc.errno == 4):
+            # EINTR
+            return
+         raise
       if (br == 0):
          self.close()
       self._index_in += br
@@ -123,6 +129,7 @@ def _selftest(out=None):
    import sys
    from .ed import ed_get
    from subprocess import Popen, PIPE
+   from .._debugging import streamlogger_setup; streamlogger_setup()
    if (out is None):
       out = sys.stdout
    
@@ -133,7 +140,8 @@ def _selftest(out=None):
       def __call__(self, data, *args,**kwargs):
          self.i += 1
          if (self.i > self.l):
-            als1.close()
+            als1._fw.close()
+            ed.shutdown()
          out.write('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs))
    
    ed = ed_get()()

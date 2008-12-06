@@ -91,6 +91,7 @@ class FDWrap:
       self.process_readability = None
       self.process_writability = None
       self.process_hup = self.close
+      self.active = True
       
    # For documentation only
    def read_r(self):
@@ -111,20 +112,22 @@ class FDWrap:
       self._ed._fdcb_read_r(self.fd)
    def read_u(self):
       """Unegister fd for reading."""
-      self._ed_fdcb_read_u(self.fd)
+      self._ed._fdcb_read_u(self.fd)
    def write_r(self):
       """Register fd for writng."""
-      self._ed_fdcb_write_r(self.fd)
+      self._ed._fdcb_write_r(self.fd)
    def write_u(self):
       """Unregister fd for writng."""
-      self._ed_fdcb_write_u(self.fd)
+      self._ed._fdcb_write_u(self.fd)
 
    def close(self):
       """Close this fd."""
-      self.ed.read_u(self.fd)
-      self.ed.write_u(self.fd)
+      if (self._ed._fdwl[self.fd] is self):
+         self._ed._fdwl[self.fd] = None
+      self.active = False
+      self.read_u()
+      self.write_u()
       os.close(self.fd)
-      self.fd = None
    def process_close(self):
       """Process FD closing; this implementation does nothing"""
       pass
@@ -137,7 +140,9 @@ class FDWrap:
       return self.fd
    
    def __hash__(self):
-      return hash(self.ed, self.fd)
+      return hash(self.ed, self.fd, self.active)
+   def __bool__(self):
+      return self.active
    def __eq__(self, other):
       return (self.fd == other.fd)
    def __ne__(self,other):

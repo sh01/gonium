@@ -16,11 +16,15 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from heapq import heappop, heappush
+import logging
 import select
 
-from ..exceptions import *
+from ..exceptions import CloseFD
 from . import _ed_register
 from ._base import EventDispatcherBase
+
+_logger = logging.getLogger('gonium.fdm.ed.select_')
+_log = _logger.log
 
 class EventDispatcherPollBase(EventDispatcherBase):
    def __init__(self, **kwargs):
@@ -46,15 +50,18 @@ class EventDispatcherPollBase(EventDispatcherBase):
          self._poll.register(fd, self._fdml[fd])
          return
       self._poll.modify(fd, self._fdml[fd])
+      
    def _fdcb_read_u(self,fd):
       mask = self._fdml[fd]
       if (mask == 0):
          return
       mask &= ~self.POLLIN
+      self._fdml[fd] = mask
       if (mask == 0):
          self._poll.unregister(fd)
+         return
       self._poll.modify(fd, mask)
-      self._fdml[fd] = mask
+      
    def _fdcb_write_r(self,fd):
       mask_old = self._fdml[fd]
       self._fdml[fd] |= self.POLLOUT
@@ -62,15 +69,17 @@ class EventDispatcherPollBase(EventDispatcherBase):
          self._poll.register(fd, self._fdml[fd])
          return
       self._poll.modify(fd, self._fdml[fd])
+      
    def _fdcb_write_u(self,fd):
       mask = self._fdml[fd]
       if (mask == 0):
          return
       mask &= ~self.POLLOUT
+      self._fdml[fd] = mask
       if (mask == 0):
          self._poll.unregister(fd)
+         return
       self._poll.modify(fd, mask)
-      self._fdml[fd] = mask
    
    def event_loop(self):
       """Process events and timers until shut down."""
@@ -90,14 +99,21 @@ class EventDispatcherPollBase(EventDispatcherBase):
          # FD event processing
          for (fd, event) in poll(timeout):
             fdw = fdwl[fd]
-            if (event & POLLIN):
-               fdw.process_readability()
-            if (event & POLLOUT):
-               fdw.process_writability()
-            if (event & POLLHUP):
-               fdw.process_hup()
-            if (event & POLLERR):
-               fdw.process_close()
+            try:
+               if (event & POLLIN):
+                  fdw.process_readability()
+               if (event & POLLOUT):
+                  fdw.process_writability()
+               if (event & POLLHUP):
+                  fdw.process_hup()
+               if (event & POLLERR):
+                  fdw.process_close()
+            except CloseFD:
+               fdw.close()
+            except Exception as exc:
+               _log(40, 'Caught exception from fd event processing code:', exc_info=True)
+               if (fdw):
+                  fdw.close()
          
          # Timer processing
          # Thread-safety here?
