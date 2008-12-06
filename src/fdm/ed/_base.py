@@ -78,6 +78,10 @@ class EventDispatcherBase:
    def _fdcb_write_u(self,fd):
       raise NotImplementedError()
 
+def _donothing(*args, **kwargs):
+   """Does nothing."""
+   pass
+
 
 class FDWrap:
    __slots__ = ('_ed', 'fd', 'process_readability', 'process_writability',
@@ -94,6 +98,7 @@ class FDWrap:
       self.fd = fd
       self.process_readability = None
       self.process_writability = None
+      self.process_close = _donothing
       self.process_hup = self.close
       
    # For documentation only
@@ -135,9 +140,6 @@ class FDWrap:
       self.write_u()
       os.close(self.fd)
       self._ed = None
-   def process_close(self):
-      """Process FD closing; this implementation does nothing"""
-      pass
    
    def fileno(self):
       """Return wrapped fd."""
