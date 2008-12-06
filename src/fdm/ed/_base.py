@@ -22,7 +22,7 @@ from types import MethodType
 from heapq import heappush
 
 _logger = logging.getLogger('gonium.src.fdm')
-_log = logger.log
+_log = _logger.log
 
 class EventDispatcherBase:
    FDC_INITIAL = 16

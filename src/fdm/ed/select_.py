@@ -97,7 +97,14 @@ class EventDispatcherPollBase(EventDispatcherBase):
             timeout = -1
 
          # FD event processing
-         for (fd, event) in poll(timeout):
+         try:
+            events = poll(timeout)
+         except IOError as exc:
+            if (exc.errno == 4):
+               # EINTR
+               continue
+            raise
+         for (fd, event) in events:
             fdw = fdwl[fd]
             try:
                if (event & POLLIN):

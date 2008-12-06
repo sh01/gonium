@@ -93,7 +93,7 @@ class AsyncDataStream:
 class AsyncLineStream(AsyncDataStream):
    """Class for asynchronously accessing line-based bytestreams"""
    def __init__(self, ed, filelike, lineseps:collections.Set=(b'\n',), **kwargs):
-      super().__init__(ed, filelike, **kwargs)
+      AsyncDataStream.__init__(self, ed, filelike, **kwargs)
       self._inbuf_index_l = 0
       self._ls = lineseps
       self._ls_maxlen = max([len(s) for s in lineseps])
@@ -126,6 +126,8 @@ class AsyncLineStream(AsyncDataStream):
 
 
 def _selftest(out=None):
+   import os
+   import signal
    import sys
    from .ed import ed_get
    from subprocess import Popen, PIPE
@@ -152,6 +154,7 @@ def _selftest(out=None):
    als1.process_input = D1()
    
    ed.event_loop()
+   os.kill(sp.pid, signal.SIGKILL)
 
 if (__name__ == '__main__'):
    _selftest(sys.stdout)
