@@ -18,9 +18,14 @@
 # FDM Stream handling classes.
 
 import collections
+from errno import ECONNRESET, EPIPE, EINPROGRESS, EINTR
 import logging
-from socket import socket as socket_cls, AF_INET, SOCK_STREAM, error as sockerr
+from select import poll, POLLOUT
+from socket import socket as socket_cls, AF_INET, SOCK_STREAM, SOL_SOCKET, \
+   SO_ERROR, error as sockerr
 import subprocess
+
+from .exceptions import CloseFD
 
 _logger = logging.getLogger('gonium.fd_management')
 _log = _logger.log
@@ -68,7 +73,7 @@ class AsyncDataStream:
       had_pending = bool(self._outbuf)
       self._outbuf.extend(buffers)
       if (flush):
-         self._output_write(had_pending)
+         self._output_write(had_pending, _known_writable=False)
 
    @classmethod
    def build_sock_connect(cls, ed, address, connect_callback=None, *,
@@ -79,18 +84,24 @@ class AsyncDataStream:
       try:
          sock.connect(address)
       except sockerr as exc:
-         if (exc.errno == 115):
-            # EINPROGRESS, as expected
+         if (exc.errno == EINPROGRESS):
             pass
          else:
             raise
       self = cls(ed, sock, read_r=False, **kwargs)
       def connect_process():
+         err = sock.getsockopt(SOL_SOCKET, SO_ERROR)
+         if (err):
+            _log(30, ('Async stream connection to {0} failed.'
+               'Error: {1}({2})').format(address, err, errno.errorcode[err]))
+            self._fw.write_u()
+            raise CloseFD()
+         
          self._fw.read_r()
          # Write output, if we have any pending; else, turn writability
          # notification off
          self._fw.process_writability = self._output_write
-         self._output_write()
+         self._output_write(_known_writable=False)
          if not (connect_callback is None):
             connect_callback(self)
       self._fw.process_writability = connect_process
@@ -143,12 +154,27 @@ class AsyncDataStream:
          self._out = None
          self._outbuf = None
 
-   def _output_write(self, _writeregistered=True):
+   def _output_write(self, _writeregistered:bool=True,
+      _known_writable:bool=True):
       """Write output and manage writability notification (un)registering"""
       i = 0
       for data in self._outbuf:
-         rv = self._out(data)
+         try:
+            rv = self._out(data)
+         except sockerr as exc:
+            if ((exc.errno == EINTR) or (exc.errno == ENOBUFS)):
+               break
+            elif ((exc.errno == ECONNRESET) or (exc.errno == EPIPE)):
+               del(self._outbuf[:i])
+               raise CloseFD()
+         
+         if ((i == 0 == rv) and (_known_writable)):
+            del(self._outbuf[:i])
+            raise CloseFD()
+         
          if (rv < len(data)):
+            # This might happen if send is interrupted by a signal, but that
+            # should be rare, and is probably not worth optimizing for.
             # For performance: don't copy data; instead create a memoryview
             # skipping written data
             self._outbuf[i] = memoryview(self._outbuf[i])[rv:]
@@ -167,12 +193,13 @@ class AsyncDataStream:
       try:
          br = self._in(memoryview(self._inbuf)[self._index_in:])
       except IOError as exc:
-         if (exc.errno == 4):
-            # EINTR
+         if (exc.errno == EINTR):
             return
+         if (exc.errno == ECONNREFUSED):
+            raise CloseFD()
          raise
       if (br == 0):
-         self.close()
+         raise CloseFD()
       self._index_in += br
    
    def _process_input0(self):
