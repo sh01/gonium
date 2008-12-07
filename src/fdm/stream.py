@@ -56,7 +56,7 @@ class AsyncDataStream:
       process_input(): process newly buffered input
       process_close(): process FD closing
    """
-   def __init__(self, ed, filelike, inbufsize_start:int=1024,
+   def __init__(self, ed, filelike, *, inbufsize_start:int=1024,
                 inbufsize_max:int=0, size_need:int=0, read_r:bool=True):
       self.fl = filelike
       for name in ('recv_into', 'readinto'):
@@ -94,9 +94,9 @@ class AsyncDataStream:
    
    @classmethod
    def build_sock_connect(cls, ed, address, connect_callback=None, *,
-      family:int=AF_INET, proto:int=0, **kwargs):
-      """Open nonblocking outgoing SOCK_STREAM connection."""
-      sock = socket_cls(family, SOCK_STREAM, proto)
+      family:int=AF_INET, type_:int=SOCK_STREAM, proto:int=0, **kwargs):
+      """Nonblockingly open outgoing SOCK_STREAM/SOCK_SEQPACKET connection."""
+      sock = socket_cls(family, type_, proto)
       sock.setblocking(0)
       try:
          sock.connect(address)
