@@ -41,9 +41,9 @@ def ip_address_build(ip_data):
          except socket.error:
             pass
    else:
-      raise TypeError('Invalid type %r for argument ip_data of value %r (expected numeric or string type).' % (type(ip_data), ip_data))
+      raise TypeError('Invalid type {0} for argument ip_data of value {1} (expected numeric or string type).'.format((type(ip_data), ip_data)))
    
-   raise ValueError('Unable to convert argument %r to a v4 or v6 ip address.' % (ip_data,))
+   raise ValueError('Unable to convert argument {0} to a v4 or v6 ip address.'.foamt(ip_data))
 
 
 class IPAddressBase(object):
@@ -51,9 +51,9 @@ class IPAddressBase(object):
    
    def __init__(self, ip_int):
       if (ip_int < self.ip_minimum):
-         raise ValueError('Value %r for argument ip_int is smaller than %s.' % (ip_int, self.ip_minimum))
+         raise ValueError('Value {0} for argument ip_int is smaller than {1}.'.format(ip_int, self.ip_minimum))
       elif (ip_int > self.ip_maximum):
-         raise ValueError('Value %r for argument ip_int is greater than %s.' % (ip_int, self.ip_maximum))
+         raise ValueError('Value {0} for argument ip_int is greater than {1}.'.format(ip_int, self.ip_maximum))
       self.ip = ip_int
    
    @classmethod
@@ -109,7 +109,7 @@ class IPAddressBase(object):
          return 0
 
    def __repr__(self):
-      return '%s.fromstring(%r)' % (self.__class__.__name__, self.__str__())
+      return '{0}.fromstring({1})'.format(self.__class__.__name__, self.__str__())
    
    def __int__(self):
       return self.ip
@@ -147,8 +147,8 @@ class IPAddressV6(IPAddressBase):
    @staticmethod
    def ipintfromstring(ip_string):
       (int1, int2) = struct.unpack('>QQ', inet_pton(AF_INET6, ip_string))
-      return int1*18446744073709551616L + int2  #18446744073709551616L == 2**(8*8) ; one more than maximum value of unsigned long long
+      return int1*18446744073709551616 + int2  #18446744073709551616L == 2**(8*8) ; one more than maximum value of unsigned long long
 
    def __str__(self):
-      return inet_ntop(AF_INET6, struct.pack('>QQ', self.ip//18446744073709551616L, self.ip & 18446744073709551615L))
+      return inet_ntop(AF_INET6, struct.pack('>QQ', self.ip//18446744073709551616, self.ip & 18446744073709551615))
 
