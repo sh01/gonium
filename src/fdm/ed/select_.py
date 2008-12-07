@@ -18,19 +18,29 @@
 from heapq import heappop, heappush
 import logging
 import select
+import time
+from collections import deque
 
+from ...event_multiplexing import EventMultiplexer
 from ..exceptions import CloseFD
 from . import _ed_register
-from ._base import EventDispatcherBase
+from ._base import EventDispatcherBaseTT
 
 _logger = logging.getLogger('gonium.fdm.ed.select_')
 _log = _logger.log
 
-class EventDispatcherPollBase(EventDispatcherBase):
+class EventDispatcherPollBase(EventDispatcherBaseTT):
+   """Baseclass for poll()/epoll()-based event dispatchers.
+   
+   Timer registering/unregistering is thread-safe; nothing else is.
+   Any interaction with instances of this class while its event_loop() is
+   running in another thread should be done by setting (expired) timers, and
+   manipulating the instance from their callback handlers."""
    def __init__(self, **kwargs):
-      EventDispatcherBase.__init__(self, **kwargs)
+      EventDispatcherBaseTT.__init__(self, **kwargs)
       self._fdml = [None]*len(self._fdwl)
       self._poll = self.CLS_POLL()
+      self.em_shutdown = EventMultiplexer(self)
    
    def _fdl_sizeinc(self, *args, **kwargs):
       """Increase size of fdlists to at least the specified size"""
@@ -39,7 +49,7 @@ class EventDispatcherPollBase(EventDispatcherBase):
    
    def fd_wrap(self, fd:int, *args, **kwargs):
       """Return FD wrapper based on this ED and specified fd"""
-      rv = EventDispatcherBase.fd_wrap(self, fd, *args, **kwargs)
+      rv = EventDispatcherBaseTT.fd_wrap(self, fd, *args, **kwargs)
       self._fdml[fd] = 0
       return rv
    
@@ -84,15 +94,17 @@ class EventDispatcherPollBase(EventDispatcherBase):
    def event_loop(self):
       """Process events and timers until shut down."""
       timers = self._timers
+      ttime = time.time
       fdwl = self._fdwl
       poll = self._poll.poll
+      timer_lock = self._timer_lock
       POLLIN = self.POLLIN
       POLLOUT = self.POLLOUT
       POLLERR = self.POLLERR
       POLLHUP = self.POLLHUP
       while (not self._shutdown_pending):
          if (timers != []):
-            timeout = self._timers[0].time
+            timeout = max(self._timers[0].time-ttime(),0)
          else:
             timeout = -1
 
@@ -124,17 +136,31 @@ class EventDispatcherPollBase(EventDispatcherBase):
                   fdw.close()
          
          # Timer processing
-         # Thread-safety here?
          if (timers == []):
             continue
-         timers_exp = []
-         while (timers[0].time < time.time()):
-            timers_exp.append(heappop(timers))
+         timer_lock.acquire()
+         # Paranoia: List may have been modified before we got the lock
+         if (timers == []):
+            continue
+         timers_exp = deque()
+         now = ttime()
+         try:
+            while (timers[0].time <= now):
+               timers_exp.append(heappop(timers))
+         finally:
+            timer_lock.release()
          
-         for timer in timers_exp:
-            timer.fire()
+         while (timers_exp):
+            timer = timers_exp.popleft()
+            try:
+               timer.fire()
+            except Exception as exc:
+               _log(40, 'Caught exception in timer {0}:'.format(timer), exc_info=True)
+               timer.ts_expire = None
             if (timer):
                heappush(timers,timer)
+      
+      self.em_shutdown()
 
 
 if (hasattr(select,'epoll')):

@@ -18,12 +18,13 @@
 # FDM Stream handling classes.
 
 import collections
-from errno import ECONNRESET, EPIPE, EINPROGRESS, EINTR
 import logging
+import subprocess
+from collections import deque
+from errno import EAGAIN, ECONNRESET, EPIPE, EINPROGRESS, EINTR
 from select import poll, POLLOUT
 from socket import socket as socket_cls, AF_INET, SOCK_STREAM, SOL_SOCKET, \
    SO_ERROR, error as sockerr
-import subprocess
 
 from .exceptions import CloseFD
 
@@ -32,10 +33,29 @@ _log = _logger.log
 
 
 class AsyncDataStream:
-   """Class for asynchronously accessing streams of bytes of any kind."""
+   """Class for asynchronously accessing streams of bytes of any kind.
+   
+   public class methods:
+      build_sock_connect(ed, address, connect_callback, *, family, proto, **):
+        Build instance wrapping new outgoing SOCK_STREAM connection.
+   
+   public instance methods:
+     send_data(lines, flush): Append data lines to output buffer; if flush
+       evaluates True, also try to send it now.
+     discard_inbuf_data(n): Discard first n bytes of buffered input
+     close(): Close wrapped filelike, if open
+     
+   Public attributes (intended for reading only):
+      fl: wrapped filelike
+   Public attributes (r/w):
+      size_need: amount of input to buffer before calling self.process_input()
+      process_input(): process newly buffered input
+      process_close(): process FD closing
+   
+   """
    def __init__(self, ed, filelike, inbufsize_start:int=1024,
                 inbufsize_max:int=0, size_need:int=0, read_r:bool=True):
-      self._f = filelike
+      self.fl = filelike
       for name in ('recv_into', 'readinto'):
          try:
             self._in = getattr(filelike, name)
@@ -53,7 +73,7 @@ class AsyncDataStream:
       else:
          raise ValueError("Unable to find send/write method on object {0!a}".format(filelike,))
       
-      self._fw = ed.fd_wrap(self._f.fileno())
+      self._fw = ed.fd_wrap(self.fl.fileno())
       self._fw.process_readability = self._process_input0
       self._fw.process_writability = self._output_write
       self._fw.process_close = self._process_close
@@ -63,18 +83,11 @@ class AsyncDataStream:
       self.size_need = size_need # how many bytes to read before calling input_process2()
       assert(inbufsize_start > 0)
       self._inbuf = bytearray(inbufsize_start)
-      self._outbuf = []
+      self._outbuf = deque()
       self._inbuf_size = inbufsize_start
       self._inbuf_size_max = inbufsize_max
       self._index_in = 0        # part of buffer filled with current data
    
-   def send_data(self, buffers:collections.Sequence, flush=True):
-      """Append set of buffers to pending output and attempt to push"""
-      had_pending = bool(self._outbuf)
-      self._outbuf.extend(buffers)
-      if (flush):
-         self._output_write(had_pending, _known_writable=False)
-
    @classmethod
    def build_sock_connect(cls, ed, address, connect_callback=None, *,
       family:int=AF_INET, proto:int=0, **kwargs):
@@ -107,20 +120,13 @@ class AsyncDataStream:
       self._fw.process_writability = connect_process
       self._fw.write_r()
       return self
-
-   def _inbuf_resize(self, new_size:(int, type(None))=None):
-      """Increase size of self.inbuf without discarding data"""
-      if (self._inbuf_size >= self._inbuf_size_max > 0):
-         _log(30, 'Closing {0} because buffer limit {0._inbuf_size_max} has been hit.'.format(self))
-         self.close()
-      if (new_size is None):
-         new_size = self._inbuf_size * 2
-      if (self._inbuf_size_max > 0):
-         new_size = min(new_size, self._inbuf_size_max)
-      self._inbuf_size = new_size
-      inbuf_new = bytearray(new_size)
-      inbuf_new[:self._index_in] = self._inbuf[:self._index_in]
-      self._inbuf = inbuf_new
+   
+   def send_data(self, buffers:collections.Sequence, flush=True):
+      """Append set of buffers to pending output and attempt to push"""
+      had_pending = bool(self._outbuf)
+      self._outbuf.extend(buffers)
+      if (flush):
+         self._output_write(had_pending, _known_writable=False)
 
    def discard_inbuf_data(self, bytes:int=None):
       """Discard <bytes> of in-buffered data."""
@@ -145,11 +151,29 @@ class AsyncDataStream:
       """Returns True iff our wrapped FD is still open"""
       return bool(self._fw)
 
+   def _inbuf_resize(self, new_size:(int, type(None))=None):
+      """Increase size of self.inbuf without discarding data"""
+      if (self._inbuf_size >= self._inbuf_size_max > 0):
+         _log(30, 'Closing {0} because buffer limit {0._inbuf_size_max} has been hit.'.format(self))
+         self.close()
+      if (new_size is None):
+         new_size = self._inbuf_size * 2
+      if (self._inbuf_size_max > 0):
+         new_size = min(new_size, self._inbuf_size_max)
+      self._inbuf_size = new_size
+      inbuf_new = bytearray(new_size)
+      inbuf_new[:self._index_in] = self._inbuf[:self._index_in]
+      self._inbuf = inbuf_new
+
    def _process_close(self):
       """Internal method for processing FD closing"""
       try:
          self.process_close()
       finally:
+         try:
+            self.fl.close()
+         except Exception:
+            pass
          self._in = None
          self._out = None
          self._outbuf = None
@@ -157,32 +181,36 @@ class AsyncDataStream:
    def _output_write(self, _writeregistered:bool=True,
       _known_writable:bool=True):
       """Write output and manage writability notification (un)registering"""
-      i = 0
-      for data in self._outbuf:
+      firstbuf = True
+      while (True):
          try:
-            rv = self._out(data)
+            buf = self._outbuf.popleft()
+         except IndexError:
+            break
+         
+         try:
+            rv = self._out(buf)
          except sockerr as exc:
             if ((exc.errno == EINTR) or (exc.errno == ENOBUFS)):
                break
             elif ((exc.errno == ECONNRESET) or (exc.errno == EPIPE)):
-               del(self._outbuf[:i])
                raise CloseFD()
          
-         if ((i == 0 == rv) and (_known_writable)):
-            del(self._outbuf[:i])
-            raise CloseFD()
+         if (firstbuf):
+            firstbuf = False
+            if ((0 == rv) and (_known_writable)):
+               self._outbuf.appendleft(buf)
+               raise CloseFD()
          
-         if (rv < len(data)):
+         if (rv < len(buf)):
             # This might happen if send is interrupted by a signal, but that
             # should be rare, and is probably not worth optimizing for.
             # For performance: don't copy data; instead create a memoryview
             # skipping written data
-            self._outbuf[i] = memoryview(self._outbuf[i])[rv:]
+            self._outbuf.appendleft(memoryview(buf)[rv:])
             break
-         i += 1
-      # discard completely written buffers
-      del(self._outbuf[:i])
-      if ((self._outbuf == []) == _writeregistered):
+      
+      if (bool(self._outbuf) != _writeregistered):
          if (_writeregistered):
             self._fw.write_u()
          else:
@@ -261,6 +289,37 @@ class AsyncPopen(subprocess.Popen):
          setattr(self, name + '_async', stream_cls(ed, stream))
 
 
+class AsyncSockServer:
+   """Asynchronous listening SOCK_STREAM/SOCK_SEQPACKET sockets.
+   
+   self.connect_process(sock, addressinfo) should be overridden by the instance
+     user; it will be called once for each accepted connection.
+   """
+   def __init__(self, ed, address, *, family:int=AF_INET, proto:int=0,
+         type_:int=SOCK_STREAM, backlog:int=16):
+      self.sock = socket_cls(family, type_, proto)
+      self.sock.setblocking(0)
+      self.sock.bind(address)
+      self.sock.listen(backlog)
+      self._fw = ed.fd_wrap(self.sock.fileno())
+      self._fw.process_readability = self._connect_process
+      self._fw.read_r()
+   
+   def connect_process(self, sock:socket_cls, addressinfo):
+      """Should be overridden by instance user: process new incoming connection"""
+      raise NotImplementedError()
+   
+   def _connect_process(self):
+      """Internal method: process new incoming connection"""
+      while (True):
+         try:
+            (sock, addressinfo) = self.sock.accept()
+         except sockerr as exc:
+            if (exc.errno == EAGAIN):
+               return
+            raise
+         self.connect_process(sock, addressinfo)
+
 
 def _selftest(out=None):
    import os
@@ -279,7 +338,6 @@ def _selftest(out=None):
          self.i += 1
          if (self.i > self.l):
             stream.close()
-            #ed.shutdown()
          ads_out.send_data(('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs).encode('ascii'),))
    
    ed = ed_get()()

@@ -18,13 +18,16 @@
 import logging
 import fcntl
 import os
+import threading
+from errno import EBADF
+from heapq import heappush, heapify
 from types import MethodType
-from heapq import heappush
 
 _logger = logging.getLogger('gonium.src.fdm')
 _log = _logger.log
 
 class EventDispatcherBase:
+   """Base class for event dispatchers."""
    FDC_INITIAL = 16
    def __init__(self, fdc_initial:int=0):
       fdc_initial = fdc_initial or self.FDC_INITIAL
@@ -46,11 +49,6 @@ class EventDispatcherBase:
       
       self._fdwl[i] = rv
       return rv
-   
-   def add_timer(self, timer):
-      """Add timer for delayed processing."""
-      # Thread-safety here?
-      heappush(self._timers,timer)
       
    def event_loop(self):
       """Run event loop; should be implemented in subclass."""
@@ -77,6 +75,32 @@ class EventDispatcherBase:
       raise NotImplementedError()
    def _fdcb_write_u(self,fd):
       raise NotImplementedError()
+
+
+class EventDispatcherBaseTT(EventDispatcherBase):
+   """Base class for event dispatchers with threadsafe timer adding and
+      removing."""
+   def __init__(self, *args, **kwargs):
+      EventDispatcherBase.__init__(self, *args, **kwargs)
+      self._timer_lock = threading.Lock()
+      
+   def register_timer(self, timer):
+      """Threadsafely register timer for delayed execution handling."""
+      self._timer_lock.acquire()
+      try:
+         heappush(self._timers, timer)
+      finally:
+         self._timer_lock.release()
+   
+   def unregister_timer(self, timer):
+      """Threadsafely unregister timer."""
+      self._timer_lock.acquire()
+      try:
+         self._timers.remove(timer)
+         heapify(self._timers)
+      finally:
+         self._timer_lock.release()
+
 
 def _donothing(*args, **kwargs):
    """Does nothing."""
@@ -130,15 +154,17 @@ class FDWrap:
 
    def close(self):
       """Close this fd."""
+      self.read_u()
+      self.write_u()
+      os.close(self.fd)
+      
       if (self._ed._fdwl[self.fd] is self):
          self._ed._fdwl[self.fd] = None
       try:
          self.process_close()
       except Exception:
          _log(40, 'Error in fd-close handler:', exc_info=True)
-      self.read_u()
-      self.write_u()
-      os.close(self.fd)
+
       self._ed = None
    
    def fileno(self):
@@ -156,3 +182,9 @@ class FDWrap:
       return (self.fd == other.fd)
    def __ne__(self,other):
       return (self.fd != other.fd)
+
+
+class Timer:
+   """Asynchronous timer, to be fired by an FDM event dispatcher."""
+   def __init__(self, callback, ):
+      pass

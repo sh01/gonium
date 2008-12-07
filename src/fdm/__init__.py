@@ -29,7 +29,7 @@
 # As such, this is the third major FD-managing module in gonium's history.
 # It's currently in an early stage of implementation, and not yet usable.
 
-from ..fdm import ed
+from . import ed
 from . import stream
 
 
