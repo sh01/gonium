@@ -37,12 +37,13 @@ import socket
 import struct
 import sys
 import time
+from collections import deque
 from socket import SOL_IP
 SOL_IPV6 = 41
 
-from gonium.ip_address import IPAddressV4, IPAddressV6
-from gonium.event_multiplexing import EventMultiplexer
-from gonium.fd_management import Timer
+from ..ip_address import IPAddressV4, IPAddressV6
+from ..event_multiplexing import EventMultiplexer
+from ..fdm import Timer
 
 NF_IP_NUMHOOKS = 5
 NF_IP6_NUMHOOKS = 5
@@ -69,7 +70,7 @@ class XTProtocolError(ValueError):
 
 def cstring_trim(s):
    """Trim a string to just before the first '\x00' element"""
-   i = s.find('\x00')
+   i = s.find(b'\x00')
    if (i == -1):
       return s
    return s[:i]
@@ -84,7 +85,7 @@ class XTGetInfo:
    def get_valid_hook_entries(self):
       """Return a list with those of our hook_entry points that are valid"""
       i = 1
-      rv = []
+      rv = deque()
       for j in range(len(self.hook_entry)):
          if (i & self.valid_hooks):
             rv.append((self.hook_entry[j],j))
@@ -105,22 +106,22 @@ class XTGetInfo:
       )
    
    def __repr__(self):
-      return '%s%s' % (self.__class__.__name__, tuple([getattr(self,name) for name in self.__fields__]))
+      return '{0}{1}'.format(self.__class__.__name__, tuple([getattr(self,name) for name in self.__fields__]))
 
-_xtgetinfo_fmt = '%ssI%sI%sIII'
+_xtgetinfo_fmt = '{0}sI{1}I{2}III'
 class XTGetInfo_IP(XTGetInfo):
    NUMHOOKS = NF_IP_NUMHOOKS
-   fmt = _xtgetinfo_fmt % (XT_TABLE_MAXNAMELEN, NUMHOOKS, NUMHOOKS)
+   fmt = _xtgetinfo_fmt.format(XT_TABLE_MAXNAMELEN, NUMHOOKS, NUMHOOKS)
    fmt_size = struct.calcsize(fmt)
 
 class XTGetInfo_IP6(XTGetInfo):
    NUMHOOKS = NF_IP6_NUMHOOKS
-   fmt = _xtgetinfo_fmt % (XT_TABLE_MAXNAMELEN, NUMHOOKS, NUMHOOKS)
+   fmt = _xtgetinfo_fmt.format(XT_TABLE_MAXNAMELEN, NUMHOOKS, NUMHOOKS)
    fmt_size = struct.calcsize(fmt)
 
 class XTGetInfo_ARP(XTGetInfo):
    NUMHOOKS = NF_ARP_NUMHOOKS
-   fmt = _xtgetinfo_fmt % (XT_TABLE_MAXNAMELEN, NUMHOOKS, NUMHOOKS)
+   fmt = _xtgetinfo_fmt.format(XT_TABLE_MAXNAMELEN, NUMHOOKS, NUMHOOKS)
    fmt_size = struct.calcsize(fmt)
 
 class BinPacker(dict):
@@ -131,10 +132,10 @@ class BinPacker(dict):
    
    def field_add(self, name, fmt, prefix='', ppf=None):
       if (name in self):
-         raise ValueError('I already contain %r.' % (name,))
+         raise ValueError('I already contain {0!a}.'.format(name))
       size = struct.calcsize(fmt)
       if (fmt and (fmt[0] in '@=<>!')):
-         raise ValueError('Invalid first char in value %r for argument fmt; use prefix for that.' % (fmt,))
+         raise ValueError('Invalid first char in value {0!a} for argument fmt; use prefix for that.'.format(fmt))
       
       # This is somewhat hackish: Assuming that padding is always inserted in
       # front of struct members allows us to determine offsets for individual
@@ -215,7 +216,7 @@ class BinPacker(dict):
    
    @classmethod
    def build_xte_arp(cls):
-      fmt_adalm = '%ds' % ARPT_DEV_ADDR_LEN_MAX
+      fmt_adalm = '{0}s'.format(ARPT_DEV_ADDR_LEN_MAX)
       self = cls()
       self.field_add('src','I', '>', IPAddressV4)
       self.field_add('dst','I', '>', IPAddressV4)
@@ -244,7 +245,7 @@ class BinPacker(dict):
    def build_xte_target(cls):
       self = cls()
       self.field_add('target_size', 'H')
-      self.field_add('target_name', '%ss' % (XT_FUNCTION_MAXNAMELEN-1,), '', cstring_trim)
+      self.field_add('target_name', '{0}s'.format(XT_FUNCTION_MAXNAMELEN-1), '', cstring_trim)
       self.field_add('target_rev', 'B')
       self.field_add(None, '0H')
       return self
@@ -253,7 +254,7 @@ class BinPacker(dict):
    def build_xte_match(cls):
       self = cls()
       self.field_add('size', 'H')
-      self.field_add('name', '%ss' % (XT_FUNCTION_MAXNAMELEN-1,), '', cstring_trim)
+      self.field_add('name', '{0}s'.format(XT_FUNCTION_MAXNAMELEN-1), '', cstring_trim)
       self.field_add('rev', 'B')
       self.field_add(None, '0H')
       return self
@@ -275,14 +276,14 @@ class XTEntry_Match:
                return self.data_get()
             except:
                pass
-      raise AttributeError('%r doesn\'t have attribute %r' % (self, name))
+      raise AttributeError('{0!a} doesn\'t have attribute {0!a}'.format(self, name))
    
    def data_get(self):
       return self.xtentry.data[self.offset+self.bp.size_get():self.offset+self.size]
    def data_get_str(self):
       return cstring_trim(self.data_get())
    def __repr__(self):
-      return '<%s name %s data %r>' % (self.__class__.__name__, self.name, self.data)
+      return '<{0} name {1} data {2}>'.format(self.__class__.__name__, self.name, self.data)
 
 
 class XTEntry_Base:
@@ -299,7 +300,7 @@ class XTEntry_Base:
 
    XT_VERDICTS = {}
    for name in ('DROP', 'ACCEPT', 'STOLEN', 'QUEUE', 'REPEAT', 'STOP'):
-      XT_VERDICTS[-1*vars()['NF_' + name]-1] = name
+      XT_VERDICTS[-1*vars()['NF_' + name]-1] = name.encode('ascii')
    
    def __init__(self, data):
       self.data = data
@@ -308,7 +309,7 @@ class XTEntry_Base:
       self.hook_entry = False # to be fixed up afterwards
       self.chain = None       # to be fixed up afterwards
       self.target = self._target_get()
-      matches = []
+      matches = deque()
       offset = self.bp.size_get()
       while (offset < self.offset_target):
          match = XTEntry_Match(self, offset)
@@ -318,13 +319,13 @@ class XTEntry_Base:
       self.matches = tuple(matches)
       
       if (offset != self.offset_target):
-         raise XTProtocolError("Sanity check failed: match parsing resulted in next offset %d, start of target section is at offset %d." % (offset, self.offset_target))
+         raise XTProtocolError("Sanity check failed: match parsing resulted in next offset {0}, start of target section is at offset {1}.".format(offset, self.offset_target))
       
       if (self.offset_target+self.target_size != len(self.data)):
-         raise XTProtocolError("Sanity check failed: entry length is %r, end of target section is at offset %r." % (len(self.data), self.offset_target+self.target_size))
+         raise XTProtocolError("Sanity check failed: entry length is {0!a}, end of target section is at offset {1}.".format(len(self.data), self.offset_target+self.target_size))
    
    def is_chainstart(self):
-      return bool(self.hook_entry or (cstring_trim(self.target_name) == 'ERROR'))
+      return bool(self.hook_entry or (cstring_trim(self.target_name) == b'ERROR'))
    
    def get_target_str(self):
       return cstring_trim(self.target_name)
@@ -332,7 +333,7 @@ class XTEntry_Base:
    def get_chain_name(self):
       if not self.is_chainstart():
          return self.chain
-      if (self.target_name == 'ERROR'):
+      if (self.target_name == b'ERROR'):
          return cstring_trim(self.target_data)
       return self.hook_names[self.hook_entry - 1]
    
@@ -363,7 +364,7 @@ class XTEntry_Base:
          return self.bin_unpackers[name]()
       except KeyError:
          pass
-      raise AttributeError("%r doesn't have attribute %r." % (type(self), name))
+      raise AttributeError("{0!a} doesn't have attribute {1!a}.".format(type(self), name))
    
    def __repr__(self):
       target = self.target
@@ -372,7 +373,7 @@ class XTEntry_Base:
             target = target.get_chain_name()
          except:
             pass
-      return '<%s instance at %s: %d %d %s .. .. %r %r %s/%s %s/%s m %s>' % (
+      return '<{0} instance at {1}: {2} {3} {4} .. .. {5!a} {6!a} {7}/{8} {9}/{10} m {11}>'.format(
          self.__class__.__name__, id(self),
          self.counter_packets, self.counter_bytes, target,
          self.iface_in, self.iface_out, self.src, self.src_mask, self.dst,
@@ -390,22 +391,22 @@ class XTEntry_IP(XTEntry_Base):
    bp = BinPacker.build_xte_ip()
    # from /usr/include/linux/netfilter_ipv4.h
    hook_names = (
-      'PREROUTING', #0
-      'INPUT',      #1
-      'FORWARD',    #2
-      'OUTPUT',     #3
-      'POSTROUTING' #4
+      b'PREROUTING', #0
+      b'INPUT',      #1
+      b'FORWARD',    #2
+      b'OUTPUT',     #3
+      b'POSTROUTING' #4
    )
    
 class XTEntry_IP6(XTEntry_Base):
    bp = BinPacker.build_xte_ip6()
    # from /usr/include/linux/netfilter_ipv6.h
    hook_names = (
-      'PREROUTING', #0
-      'INPUT',      #1
-      'FORWARD',    #2
-      'OUTPUT',     #3
-      'POSTROUTING' #4
+      b'PREROUTING', #0
+      b'INPUT',      #1
+      b'FORWARD',    #2
+      b'OUTPUT',     #3
+      b'POSTROUTING' #4
    )
 
 
@@ -413,9 +414,9 @@ class XTEntry_ARP(XTEntry_Base):
    bp = BinPacker.build_xte_arp()
    # from /usr/include/linux/netfilter_arp.h
    hook_names = (
-      'INPUT',   #0
-      'OUTPUT',  #1
-      'FORWARD', #2
+      b'INPUT',   #0
+      b'OUTPUT',  #1
+      b'FORWARD', #2
    )
 
 class XTGEContainer:
@@ -431,7 +432,7 @@ class XTGEContainer:
 
 class XTGetEntries_Base:
    __fields__ = ('name', 'entries')
-   fmts = '%ssI0Q' % (XT_TABLE_MAXNAMELEN,)
+   fmts = '{0}sI0Q'.format(XT_TABLE_MAXNAMELEN,)
    fmts_size = struct.calcsize(fmts)
    
    def __init__(self, name, entries):
@@ -451,8 +452,8 @@ class XTGetEntries_Base:
 
          chain_name = entry.get_chain_name()
          if (chain_name in rv):
-            raise XTProtocolError('Duplicated chain name %r.' % (chain_name,))
-         l = rv[chain_name] = []
+            raise XTProtocolError('Duplicated chain name {0!a}.'.format(chain_name,))
+         l = rv[chain_name] = deque()
          if (entry.target_name == 'ERROR'):
             # user-defined chain
             continue
@@ -472,7 +473,7 @@ class XTGetEntries_Base:
       base_offset = cls.fmts_size
       offset = base_offset
       size = len(data)
-      entries = []
+      entries = deque()
       entries_by_offset = {}
       while (offset < size):
          offset_next = cls.xt_entry.bp.field_get('offset_next', data, offset)
@@ -482,12 +483,12 @@ class XTGetEntries_Base:
          entries_by_offset[offset-base_offset] = entry
          
          if (offset_next < 1):
-            raise ValueError('Bogus value %r for offset_next' % (offset_next,))
+            raise ValueError('Bogus value {0!a} for offset_next'.format(offset_next,))
          rout = repr(entries[-1].iface_in)
          offset += offset_next
          
       if (offset != size):
-         raise ValueError('Final offset %r, size %r; expected equality.' % (offset, size))
+         raise ValueError('Final offset {0!a}, size {1!a}; expected equality.'.format(offset, size))
       
       try:
          # Identify hook targets
@@ -500,12 +501,12 @@ class XTGetEntries_Base:
                continue
             entry.target = entries_by_offset[entry._verdict_get()]
       
-      except KeyError, exc_orig:
-         exc_new = XTProtocolError('Entry-list postprocessing failed. Original error: %s' % (sys.exc_info(),))
+      except KeyError as exc_orig:
+         exc_new = XTProtocolError('Entry-list postprocessing failed. Original error: {0!s}'.format(sys.exc_info(),))
          exc_new.exc_orig = exc_orig
          raise exc_new
       
-      return cls(cname.value, entries)
+      return cls(cname.value, tuple(entries))
 
 
 class XTGetEntries_IP(XTGetEntries_Base):
@@ -590,21 +591,20 @@ class XTablesARP(XTables):
 
 
 class XTablesPoller:
-   def __init__(self, ed, interval, xt=None, tables=('filter',)):
+   def __init__(self, ed, interval, xt=None, tables=(b'filter',)):
       if (xt is None):
          xt = XTablesIP()
       self.em_xtentries = EventMultiplexer(self)
       self.ed = ed
       self.xt = xt
       self.tables = tables
-      self.timer = Timer(ed, interval, self.xt_poll, persistence=True, align=True, parent=self)
+      self.timer = Timer(ed, interval, self.xt_poll, persist=True, align=True, parent=self)
    
    def xt_poll(self):
       for table in self.tables:
          self.em_xtentries(self.xt.table_read(table))
 
-
-if (__name__ == '__main__'):
+def _selftest():
    import pprint
    import sys
 
@@ -621,15 +621,15 @@ if (__name__ == '__main__'):
    try:
       tablename = sys.argv[1]
    except IndexError:
-      tablename = 'filter'
+      tablename = b'filter'
    
    print('=== Testing: XTables ===')
    for cls in (XTablesIP, XTablesIP6, XTablesARP):
       NI = cls()
-      print('------------------------------------------------ cls: %s' % (cls,))
+      print('------------------------------------------------ cls: {0}'.format(cls))
       xtgec = NI.table_read(tablename)
       xtge = xtgec.xtge
-      print('----- retrieved: %f %f' % (xtgec.ts_low, xtgec.ts_high))
+      print('----- retrieved: {0} {1}'.format(xtgec.ts_low, xtgec.ts_high))
       for ie in xtge.entries:
          #pprint.pprint((ie.fields_get(), ie.target_get()))
          print(int(ie.is_chainstart()), ie.target, ie.target_data, ie.counter_packets, ie.counter_bytes)
@@ -637,16 +637,18 @@ if (__name__ == '__main__'):
       NI.close()
    
    print('\n=== Testing: XTablesPoller ===')
-   from gonium.fd_management import EventDispatcherPoll
+   from ..fdm import ED_get
    
    def quit_print(*args, **kwargs):
       print((args, kwargs))
       ed.shutdown()
 
-   ed = EventDispatcherPoll()
+   ed = ED_get()()
    xtp = XTablesPoller(ed, 1)
-   xtp.em_xtentries.EventListener(quit_print)
+   xtp.em_xtentries.new_listener(quit_print)
    ed.event_loop()
    
    print('\n=== All tests passed. ===')
 
+if (__name__ == '__main__'):
+   _selftest()

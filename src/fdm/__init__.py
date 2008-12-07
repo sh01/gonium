@@ -30,7 +30,8 @@
 # It's currently in an early stage of implementation, and not yet usable.
 
 from . import ed
+from . import stream
 from .ed import ED_get
 from .ed._base import Timer
-from . import stream
-
+from .stream import *
+from .packet import *

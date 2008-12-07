@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007, 2008 Sebastian Hagen
 # This file is part of gonium.
 #
 # gonium is free software; you can redistribute it and/or modify
@@ -15,133 +15,119 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Gonium event multiplexing. This is a basic event framework implementing a 
-generalization of the observer pattern."""
+"""
+This is the gonium event multiplexing module. It's a simple eventing framework
+implementing the observer pattern.
+
+Basic usage:
+ - Code that wants to publish events that might be interested to more than
+   one callee instantiate an EventMultiplexer and put it in a well-defined
+   place. If they want to publish several types of events, they can do this
+   repeatedly.
+ - Code that wants to listen to such events calls the relevant
+   EventMultiplexer's new_listener() method with one argument: the desired
+   callee. This call will return an EventListener object.
+   If the listening code keeps the EventListener object around, they can
+   unregister at any time by calling its close() method.
+ - Every time the EventMultiplexer instance is called, it will call all
+   callbacks subscribed to it with the same positional and keyword arguments
+   it was called with.
+ - Exceptions thrown by callees are logged with priority 40.
+"""
+
+import logging
+from collections import Callable
+from copy import copy as copy_
+
+_logger = logging.getLogger('gonium.event_multiplexing')
+_log = _logger.log
 
 
-class EventListenerRegister:
-   """Baseclass for classes which register event listeners"""
-   pass
-
-class EventListenerMeta(type):
-   """Metaclass for EventListeners. Implements EventListenerRegister functionality."""
-   def __init__(self, name, *args, **kwargs):
-      type.__init__(self, name, *args, **kwargs)
-      
-      def builder(elr_self, *args, **kwargs):
-         return self(elr_self, *args, **kwargs)
-      
-      builder.name = name
-      setattr(EventListenerRegister, name, builder)
-
-class EventMultiplexer(EventListenerRegister):
+class EventMultiplexer:
    """Class for passing events to set of listeners"""
-   def __init__(self, parent):
+   def __init__(self, parent:object):
       self.parent = parent
       self.listeners = []
    
-   def listener_register(self, listener):
-      """Register a new listener"""
+   def new_listener(self, handler:Callable) -> 'EventListener':
+      """Return new EventListener based on this multiplexer"""
+      return EventListener(self, handler)
+   
+   def _listener_subscribe(self, listener):
+      """Subscribe a new listener"""
       if (listener in self.listeners):
-         raise ValueError('%r is already tracking listener %r.' % (self, listener))
+         raise ValueError('{0} is already tracking listener {1!a}.'.format(self, listener))
       self.listeners.append(listener)
    
-   def listener_unregister(self, listener):
-      """Unregister a previously registered listener"""
+   def _listener_unsubscribe(self, listener):
+      """Unsubscribe a previously subscribed listener"""
       self.listeners.remove(listener)
 
    def __call__(self, *args, **kwargs):
       """Multiplex event"""
-      for listener in self.listeners[:]:
-         listener.handler_run(*args, **kwargs)
+      for listener in copy_(self.listeners):
+         listener.callback(*args, **kwargs)
 
-   def clean_up(self):
-      """Unregister all active listeners"""
+   def close(self):
+      """Unsubscribe all active listeners"""
       while (self.listeners != []):
-         self.listeners[0].clean_up()
+         self.listeners[-1].close()
 
 
 class EventListener:
-   __metaclass__ = EventListenerMeta
    """Class for receiving events from a multiplexer"""
-   def __init__(self, multiplexer, handler):
-      self.multiplexer = multiplexer
-      self.handler = handler
-      multiplexer.listener_register(self)
+   def __init__(self, multiplexer:EventMultiplexer, callback:Callable):
+      self._multiplexer = multiplexer
+      self.callback = callback
+      multiplexer._listener_subscribe(self)
       
-   def __eq__(self, other):
+   def __eq__(self, other) -> bool:
       """Compare for equality"""
       return (isinstance(other, EventListener) and
-         (self.handler == other.handler) and 
+         (self.callback == other.callback) and 
          (self.multiplexer == other.multiplexer))
    
-   def __neq__(self, other):
+   def __ne__(self, other) -> bool:
       """Compare for inequality"""
       return (not (self == other))
       
-   def __hash__(self, other):
+   def __hash__(self, other) -> int:
       """Compute hash value of instance"""
-      return hash((self.handler, self.multiplexer))
-      
-   def handler_run(self, *args, **kwargs):
-      """Run event handler"""
-      self.handler(self, *args, **kwargs)
+      return hash((self.callback, self._multiplexer))
     
-   def clean_up(self):
-      """Unregister from multiplexer"""
-      self.multiplexer.listener_unregister(self)
-      self.multiplexer = None
-
-
-class CCBEventListener(EventListener):
-   """Event listener with separate callback at unregistering (CCB: cleanup call back)"""
-   def __init__(self, multiplexer, close_handler, *args, **kwargs):
-      EventListener.__init__(self, multiplexer, *args, **kwargs)
-      self.close_handler = close_handler
-   
-   def clean_up(self):
-      """Unregister from multiplexer"""
-      try:
-         self.close_handler(self)
-      except:
-         EventListener.clean_up(self)
-         raise
-      else:
-         EventListener.clean_up(self)
+   def close(self):
+      """Unsubscribe from multiplexer"""
+      self._multiplexer._listener_unsubscribe(self)
+      self._multiplexer = None
 
 
 class EventAggregator(EventMultiplexer):
    """Class for aggregating multiple event multiplexers into one"""
-   def __init__(self, multiplexers=None, *args, **kwargs):
+   def __init__(self, multiplexers=(), *args, **kwargs):
       EventMultiplexer.__init__(self, *args, **kwargs)
       self.listeners_in = {}
-      if not (multiplexers is None):
-         for m in multiplexers:
-            self.multiplexer_register(m)
-      
-   def listener_in_close_handle(self, listener):
-      """Handle closing of listener for incoming events"""
-      del(self.listeners_in[listener.multiplexer])
+      for m in multiplexers:
+         self.multiplexer_subscribe(m)
       
    def multiplexer_register(self, m):
       """Register specified multiplexer """
-      self.listeners_in[m] = CCBEventListener(m, self.listener_in_close_handle, self)
+      self.listeners_in[m] = m.new_listener()
       
    def multiplexer_unregister(self, m):
       """Unregister specified multiplexer"""
       listener = self.listeners_in.pop(m)
-      listener.clean_up()
+      listener.close()
 
-   def clean_up(self):
+   def close(self):
       """Unregister all active listeners, in both directions"""
-      EventMultiplexer.clean_up(self)
+      EventMultiplexer.close(self)
       for listener in self.listeners_in.values():
-         listener.clean_up()
+         listener.close()
 
 
 class DSEventAggregator(EventAggregator):
    """Class for aggregating multiple event multiplexers while only passing every Nth event (DS: downsampling)"""
-   def __init__(self, n, *args, **kwargs):
+   def __init__(self, n:int, *args, **kwargs):
       EventAggregator.__init__(self, *args, **kwargs)
       self.n = n
       self.i = 0
