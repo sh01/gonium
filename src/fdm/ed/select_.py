@@ -104,7 +104,7 @@ class EventDispatcherPollBase(EventDispatcherBaseTT):
       POLLHUP = self.POLLHUP
       while (not self._shutdown_pending):
          if (timers != []):
-            timeout = max(self._timers[0].time-ttime(),0)
+            timeout = max(self._timers[0]._expire_ts-ttime(),0)
          else:
             timeout = -1
 
@@ -145,8 +145,10 @@ class EventDispatcherPollBase(EventDispatcherBaseTT):
          timers_exp = deque()
          now = ttime()
          try:
-            while (timers[0].time <= now):
+            while (timers[0]._expire_ts <= now):
                timers_exp.append(heappop(timers))
+         except IndexError:
+            pass
          finally:
             timer_lock.release()
          
@@ -156,7 +158,6 @@ class EventDispatcherPollBase(EventDispatcherBaseTT):
                timer.fire()
             except Exception as exc:
                _log(40, 'Caught exception in timer {0}:'.format(timer), exc_info=True)
-               timer.ts_expire = None
             if (timer):
                heappush(timers,timer)
       

@@ -41,7 +41,8 @@ class AsyncDataStream:
    
    public instance methods:
      send_data(lines, flush): Append data lines to output buffer; if flush
-       evaluates True, also try to send it now.
+       evaluates to True, also try to send it now.
+     send_bytes(lines, flush): As above, but without trying to encode strings
      discard_inbuf_data(n): Discard first n bytes of buffered input
      close(): Close wrapped filelike, if open
      
@@ -49,9 +50,11 @@ class AsyncDataStream:
       fl: wrapped filelike
    Public attributes (r/w):
       size_need: amount of input to buffer before calling self.process_input()
+      output_encoding: argument to pass to .encode() for encoding str
+         instances passed to send_data(). Data from byte sequences-objects
+         is always written unmodified.
       process_input(): process newly buffered input
       process_close(): process FD closing
-   
    """
    def __init__(self, ed, filelike, inbufsize_start:int=1024,
                 inbufsize_max:int=0, size_need:int=0, read_r:bool=True):
@@ -87,6 +90,7 @@ class AsyncDataStream:
       self._inbuf_size = inbufsize_start
       self._inbuf_size_max = inbufsize_max
       self._index_in = 0        # part of buffer filled with current data
+      self.output_encoding = None
    
    @classmethod
    def build_sock_connect(cls, ed, address, connect_callback=None, *,
@@ -121,10 +125,21 @@ class AsyncDataStream:
       self._fw.write_r()
       return self
    
-   def send_data(self, buffers:collections.Sequence, flush=True):
-      """Append set of buffers to pending output and attempt to push"""
+   def send_data(self, buffers:collections.Sequence, *args, **kwargs):
+      """Like send_bytes(), but encodes any strings with self.output_encoding."""
+      enc = self.output_encoding
+      for buf in buffers:
+         try:
+            buf = buf.encode(enc)
+         except AttributError:
+            pass
+         self._outbuf.append(buf)
+      self.send_bytes(buffers, *args, **kwargs)
+      
+   def send_bytes(self, buffers:collections.Sequence, flush=True):
+      """Append set of buffers to pending output and attempt to push.
+         Buffers elements must be bytes, bytearray, memoryview or similar."""
       had_pending = bool(self._outbuf)
-      self._outbuf.extend(buffers)
       if (flush):
          self._output_write(had_pending, _known_writable=False)
 
@@ -324,7 +339,7 @@ class AsyncSockServer:
 def _selftest(out=None):
    import os
    import sys
-   from .ed import ed_get
+   from . import ED_get, Timer
    from subprocess import PIPE
    from .._debugging import streamlogger_setup; streamlogger_setup()
    if (out is None):
@@ -336,21 +351,28 @@ def _selftest(out=None):
          self.l = l
       def __call__(self, stream, data, *args,**kwargs):
          self.i += 1
+         
+         ads_out.send_data(('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs),))
          if (self.i > self.l):
             stream.close()
-         ads_out.send_data(('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs).encode('ascii'),))
    
-   ed = ed_get()()
+   def close_handler():
+      d = 2
+      ads_out.send_data(('Pipe closed, will shutdown in {0} seconds\n'.format(d),))
+      Timer(ed, d, ed.shutdown)
+      
+   ed = ED_get()()
    out.write('Using ED {0}\n'.format(ed))
    out.write('==== AsyncLineStream test ====\n')
    sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stream_cls=AsyncLineStream)
    sp.stdout_async.process_input = D1()
-   sp.stdout_async.process_close = ed.shutdown
+   sp.stdout_async.process_close = close_handler
    # socket testing code; commented out since it needs a suitably chatty remote
    #sock = AsyncLineStream.build_sock_connect(ed, (('192.168.0.10',6667)))
    #sock.process_input = D1()
    #sock.send_data((b'test\nfoo\nbar\n',),flush=False)
    ads_out = AsyncDataStream(ed, os.fdopen(os.dup(out.fileno()),'wb', buffering=0), read_r=False)
+   ads_out.output_encoding = 'ascii'
    
    ed.event_loop()
    sp.kill()

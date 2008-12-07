@@ -22,6 +22,6 @@ def _ed_register(l):
 
 from . import select_
 
-def ed_get():
+def ED_get():
    return event_dispatchers[0]
 

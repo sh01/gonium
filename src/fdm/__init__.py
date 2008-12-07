@@ -30,6 +30,7 @@
 # It's currently in an early stage of implementation, and not yet usable.
 
 from . import ed
+from .ed import ED_get
+from .ed._base import Timer
 from . import stream
-
 

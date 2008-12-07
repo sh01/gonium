@@ -17,10 +17,13 @@
 
 import logging
 import fcntl
+import numbers
 import os
 import threading
+from collections import Callable
 from errno import EBADF
 from heapq import heappush, heapify
+from time import time as time_
 from types import MethodType
 
 _logger = logging.getLogger('gonium.src.fdm')
@@ -100,6 +103,7 @@ class EventDispatcherBaseTT(EventDispatcherBase):
          heapify(self._timers)
       finally:
          self._timer_lock.release()
+      timer._expire_ts = None
 
 
 def _donothing(*args, **kwargs):
@@ -186,5 +190,57 @@ class FDWrap:
 
 class Timer:
    """Asynchronous timer, to be fired by an FDM event dispatcher."""
-   def __init__(self, callback, ):
-      pass
+   def __init__(self, ed, interval:numbers.Real, callback:Callable,
+         args=(), kwargs={}, *, parent=None, persistent=False, align=False,
+         interval_relative=True):
+      self._ed = ed
+      self._interval = interval
+      self._callback = callback
+      self._cbargs = args
+      self._cbkwargs = kwargs
+      self.parent = parent
+      self._persistent = persistent
+      self._align = align
+      expire_ts = interval
+      now = time_()
+      if (interval_relative):
+         expire_ts += now
+      if (align):
+         expire_ts -= (expire_ts % interval)
+      
+      self._expire_ts = expire_ts
+      if (self._ed is None):
+         return
+      self._ed.register_timer(self)
+
+   def fire(self):
+      """Fire timer, executing callback and (if persistent) bumping expire time"""
+      try:
+         self._callback(*self._cbargs, **self._cbkwargs)
+      finally:
+         if (self._persistent):
+            if (self._align):
+               self._expire_ts = time_() + self._interval
+               self._expire_ts -= (self._expire_ts % self._interval)
+            else:
+               self._expire_ts += self._interval - ((time_() - self._expire_ts) % self._interval)
+         else:
+            self._expire_ts = None
+
+   # comparison functions
+   # __eq__, __ne__ and __hash__ are by default based on id(); this works just
+   # fine for this class.
+   def __lt__(self, other):
+      return ((self._expire_ts < other._expire_ts) or
+         ((self._expire_ts == other._expire_ts) and (id(self) < id(other))))
+   def __gt__(self, other):
+      return ((self._expire_ts > other._expire_ts) or
+         ((self._expire_ts == other._expire_ts) and (id(self) > id(other))))
+   def __le__(self, other):
+      return not (self > other)
+   def __ge__(self,other):
+      return not (self < other)
+   
+   def __bool__(self):
+      """Return whether timer is active (i.e. still pending for firing)"""
+      return not (self._expire_ts is None)
