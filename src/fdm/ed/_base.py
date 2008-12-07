@@ -191,7 +191,7 @@ class FDWrap:
 class Timer:
    """Asynchronous timer, to be fired by an FDM event dispatcher."""
    def __init__(self, ed, interval:numbers.Real, callback:Callable,
-         args=(), kwargs={}, *, parent=None, persistent=False, align=False,
+         args=(), kwargs={}, *, parent=None, persist=False, align=False,
          interval_relative=True):
       self._ed = ed
       self._interval = interval
@@ -199,7 +199,7 @@ class Timer:
       self._cbargs = args
       self._cbkwargs = kwargs
       self.parent = parent
-      self._persistent = persistent
+      self._persist = persist
       self._align = align
       expire_ts = interval
       now = time_()
@@ -218,7 +218,7 @@ class Timer:
       try:
          self._callback(*self._cbargs, **self._cbkwargs)
       finally:
-         if (self._persistent):
+         if (self._persist):
             if (self._align):
                self._expire_ts = time_() + self._interval
                self._expire_ts -= (self._expire_ts % self._interval)

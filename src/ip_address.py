@@ -147,8 +147,8 @@ class IPAddressV6(IPAddressBase):
    @staticmethod
    def ipintfromstring(ip_string):
       (int1, int2) = struct.unpack('>QQ', inet_pton(AF_INET6, ip_string))
-      return int1*18446744073709551616 + int2  #18446744073709551616L == 2**(8*8) ; one more than maximum value of unsigned long long
+      return (int1 << 64) + int2 
 
    def __str__(self):
-      return inet_ntop(AF_INET6, struct.pack('>QQ', self.ip//18446744073709551616, self.ip & 18446744073709551615))
+      return inet_ntop(AF_INET6, struct.pack('>QQ', self.ip >> 64, self.ip & 18446744073709551615)) # 18446744073709551615 == (1 << 64)-1
 

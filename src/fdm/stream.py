@@ -371,7 +371,7 @@ def _selftest(out=None):
    #sock = AsyncLineStream.build_sock_connect(ed, (('192.168.0.10',6667)))
    #sock.process_input = D1()
    #sock.send_data((b'test\nfoo\nbar\n',),flush=False)
-   ads_out = AsyncDataStream(ed, os.fdopen(os.dup(out.fileno()),'wb', buffering=0), read_r=False)
+   ads_out = AsyncDataStream(ed, open(out.fileno(),'wb', buffering=0, closefd=False), read_r=False)
    ads_out.output_encoding = 'ascii'
    
    ed.event_loop()
