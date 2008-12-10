@@ -15,10 +15,13 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sys
-from distutils.core import setup
+from distutils.core import setup, Extension
 
 if (sys.version_info[0] <= 2):
    raise Exception('This gonium version needs a python >= 3.0') 
+
+module1 = Extension('gonium.posix.signal_', sources = ['src/posix/signal_module.c'])
+
 
 setup(name='gonium',
    version='0.6',
@@ -26,7 +29,8 @@ setup(name='gonium',
    author='Sebastian Hagen',
    author_email='sebastian_hagen@memespace.net',
    url='http://git.memespace.net/git/gonium.git',
-   packages=('gonium', 'gonium.fd_management', 'gonium.posix', 'gonium.linux'),
+   packages=('gonium', 'gonium.fdm', 'gonium.posix', 'gonium.linux'),
+   ext_modules = [module1],
    package_dir={'gonium':'src'}
 )
 
