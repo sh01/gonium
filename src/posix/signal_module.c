@@ -57,62 +57,51 @@ typedef struct {
    PyObject_HEAD
    /* Type-specific fields go here. */
    siginfo_t data;
-} siginfoObject;
+} SigInfo;
 
 
-static PyObject * siginfo_getter(siginfoObject *self, void *closure) {
+static PyObject * siginfo_getter(SigInfo *self, void *closure) {
   int idx = *((int*)closure);
-  PyObject *rv = NULL;
   
   switch(idx) {
-     case 0:
-        rv = PyLong_FromLong(self->data.si_signo);
-        break;
-     case 1:
-        rv = PyLong_FromLong(self->data.si_errno);
-        break;
-     case 2:
-        rv = PyLong_FromLong(self->data.si_code);
-        break;
-     case 3:
-        rv = PyLong_FromLong(self->data.si_pid);
-        break;
-     case 4:
-        rv = PyLong_FromLong(self->data.si_uid);
-        break;
-     case 5:
-        rv = PyLong_FromLong(self->data.si_status);
-        break;
-     case 6:
-        rv = PyFloat_FromDouble(self->data.si_utime);
-        break;
-     case 7:
-        rv = PyFloat_FromDouble(self->data.si_stime);
-        break;
-     case 8:
-        rv = PyLong_FromLong(self->data.si_value.sival_int);
-        break;
-     case 9:
-        rv = PyLong_FromVoidPtr(self->data.si_value.sival_ptr);
-        break;
-     case 10:
-        rv = PyLong_FromLong(self->data.si_int);
-        break;
-     case 11:
-        rv = PyLong_FromVoidPtr(self->data.si_ptr);
-        break;
-     case 12:
-        rv = PyLong_FromVoidPtr(self->data.si_addr);
-        break;
-     case 13:
-        rv = PyLong_FromLong(self->data.si_band);
-        break;
-     case 14:
-        rv = PyLong_FromLong(self->data.si_fd);
-        break;
+     case 0: return PyLong_FromLong(self->data.si_signo);
+     case 1: return PyLong_FromLong(self->data.si_errno);
+     case 2: return PyLong_FromLong(self->data.si_code);
+     case 3: return PyLong_FromLong(self->data.si_pid);
+     case 4: return PyLong_FromLong(self->data.si_uid);
+     case 5: return PyLong_FromLong(self->data.si_status);
+     case 6: return PyFloat_FromDouble(self->data.si_utime);
+     case 7: return PyFloat_FromDouble(self->data.si_stime);
+     case 8: return PyLong_FromLong(self->data.si_value.sival_int);
+     case 9: return PyLong_FromVoidPtr(self->data.si_value.sival_ptr);
+     case 10: return PyLong_FromLong(self->data.si_int);
+     case 11: return PyLong_FromVoidPtr(self->data.si_ptr);
+     case 12: return PyLong_FromVoidPtr(self->data.si_addr);
+     case 13: return PyLong_FromLong(self->data.si_band);
+     case 14: return PyLong_FromLong(self->data.si_fd);
   }
-  return rv;
+  return NULL;
 }
+
+/* -- currently defective
+int siginfo_asbuf(SigInfo *self, Py_buffer *view, int flags) {
+   if (flags & (PyBUF_WRITABLE | PyBUF_STRIDES)) {
+      return -1;
+   }
+   view->buf = &self->data;
+   view->len = sizeof(siginfo_t);
+   view->readonly = 1;
+   view->format = NULL;
+   if (flags & PyBUF_ND) {
+      view->ndim = 1;
+      if (!(view->shape = PyMem_Malloc(sizeof(Py_ssize_t)))) return -1;
+      view->shape[0] = sizeof(siginfo_t);
+   } else {
+      view->ndim = 0;
+      view->shape = NULL;
+   }
+   return 0;
+}*/
 
 int siginfo_idx[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14};
 
@@ -137,9 +126,9 @@ static PyGetSetDef siginfo_getsetters[] = {
 
 
 static PyTypeObject siginfoType = {
-   PyObject_HEAD_INIT(NULL)
+   PyVarObject_HEAD_INIT(&PyType_Type, 0)
    "signal_.SigInfo",         /* tp_name */
-   sizeof(siginfoObject),     /* tp_basicsize */
+   sizeof(SigInfo),           /* tp_basicsize */
    0,                         /* tp_itemsize */
    0,                         /* tp_dealloc */
    0,                         /* tp_print */
@@ -170,26 +159,143 @@ static PyTypeObject siginfoType = {
 };
 
 
-static PyMethodDef methods[] = {
-    {"saved_signals_get", saved_signals_get, METH_VARARGS,
-     "Return tuple containing saved signals."},
+typedef struct {
+   PyObject_HEAD
+   /* Type-specific fields go here. */
+   sigset_t ss;
+} SigSet;
+
+
+static int SigSet_init(SigSet *self, PyObject *args, PyObject *kwargs) {
+   static char *kwlist[] = {NULL};
+   void *bogus;
+   // faulty!
+   if (!PyArg_ParseTupleAndKeywords(args, kwargs, "", kwlist, &bogus)) return -1;
+   if (sigemptyset(&self->ss)) {
+      PyErr_SetFromErrno(PyExc_SystemError);
+      return -1;
+   }
+   return 0;
+}
+
+static PyObject *SigSet_clear(SigSet *self) {
+   if (sigemptyset(&self->ss)) return NULL;
+   Py_RETURN_NONE;
+}
+
+static PyObject *SigSet_fill(SigSet *self) {
+   if (sigfillset(&self->ss)) {
+      PyErr_SetFromErrno(PyExc_SystemError);
+      return NULL;
+   }
+   Py_RETURN_NONE;
+}
+
+static PyObject *SigSet_add(SigSet *self, PyObject *args) {
+   int signal;
+   if (!PyArg_ParseTuple(args, "i", &signal)) return NULL;
+   if (sigaddset(&self->ss, signal)) {
+      PyErr_SetFromErrno(PyExc_ValueError);
+      return NULL;
+   }
+   Py_RETURN_NONE;
+}
+
+static PyObject *SigSet_remove(SigSet *self, PyObject *args) {
+   int signal;
+   if (!PyArg_ParseTuple(args, "i", &signal)) return NULL;
+   if (sigdelset(&self->ss, signal)) {
+      PyErr_SetFromErrno(PyExc_ValueError);
+      return NULL;
+   }
+   Py_RETURN_NONE;
+}
+
+static PyObject *SigSet_in(SigSet *self, PyObject *args) {
+   int signal, rv;
+   if (!PyArg_ParseTuple(args, "i", &signal)) return NULL;
+   rv = sigismember(&self->ss, signal);
+   if (rv == 0) Py_RETURN_FALSE;
+   if (rv == 1) Py_RETURN_TRUE;
+   if (rv == -1) PyErr_SetFromErrno(PyExc_ValueError);
+   return NULL;
+}
+
+
+static PyMethodDef SigSet_methods[] = {
+    {"clear", (PyCFunction)SigSet_clear, METH_NOARGS, "sigemptyset() wrapper: initialize sigset to empty"},
+    {"fill", (PyCFunction)SigSet_fill, METH_NOARGS, "sigfillset() wrapper: initialize sigset to full"},
+    {"add", (PyCFunction)SigSet_add, METH_VARARGS, "sigaddset() wrapper: add signal to sigset"},
+    {"remove", (PyCFunction)SigSet_remove, METH_VARARGS, "sigdelset() wrapper: remove signal from sigset"},
+    {"__contains__", (PyCFunction)SigSet_in, METH_VARARGS, "sigismember() wrapper: membership test"},
+    {NULL}  /* Sentinel */
+};
+
+
+static PyTypeObject SigSetType = {
+   PyVarObject_HEAD_INIT(&PyType_Type, 0)
+   "signal_.SigSet",          /* tp_name */
+   sizeof(SigSet),            /* tp_basicsize */
+   0,                         /* tp_itemsize */
+   0,                         /* tp_dealloc */
+   0,                         /* tp_print */
+   0,                         /* tp_getattr */
+   0,                         /* tp_setattr */
+   0,                         /* tp_compare */
+   0,                         /* tp_repr */
+   0,                         /* tp_as_number */
+   0,                         /* tp_as_sequence */
+   0,                         /* tp_as_mapping */
+   0,                         /* tp_hash  */
+   0,                         /* tp_call */
+   0,                         /* tp_str */
+   0,                         /* tp_getattro */
+   0,                         /* tp_setattro */
+   0,                         /* tp_as_buffer */
+   Py_TPFLAGS_DEFAULT,        /* tp_flags */
+   "This type is a thin wrapper around C sigset_t objects.", /* tp_doc */
+   0,		              /* tp_traverse */
+   0,		              /* tp_clear */
+   0,		              /* tp_richcompare */
+   0,		              /* tp_weaklistoffset */
+   0,		              /* tp_iter */
+   0,		              /* tp_iternext */
+   SigSet_methods,            /* tp_methods */
+   0,                         /* tp_members */
+   0,                         /* tp_getset */
+   0,                         /* tp_getset */
+   0,                         /* tp_base */
+   0,                         /* tp_dict */
+   0,                         /* tp_descr_get */
+   0,                         /* tp_descr_set */
+   0,                         /* tp_dictoffset */
+   (initproc)SigSet_init,     /* tp_init */
+};
+
+
+
+static PyMethodDef module_methods[] = {
+    {"saved_signals_get", saved_signals_get, METH_VARARGS, "Return tuple containing saved signals."},
     {NULL, NULL, 0, NULL}
 };
+
 
 static struct PyModuleDef signal_module = {
    PyModuleDef_HEAD_INIT,
    "signal_",
    NULL,
    -1,
-   methods
+   module_methods
 };
+
 
 static PyObject* saved_signals_get(PyObject *self, PyObject *args) {
    sdarray_t *sda_tmp;
    siginfo_t *sia;
    sigset_t ss_tmp;
    size_t i, used;
-   siginfoObject *si_py;
+   SigInfo *si_py;
+   
    PyObject *rv;
    
    if (!PyArg_ParseTuple(args,"")) return NULL;
@@ -205,7 +311,7 @@ static PyObject* saved_signals_get(PyObject *self, PyObject *args) {
    sia = (void*) sd1->data;
 
    for (i = 0; i < used; i++) {
-      if (!(si_py = PyObject_New(siginfoObject, &siginfoType)) ||
+      if (!(si_py = PyObject_New(SigInfo, &siginfoType)) ||
          PyTuple_SetItem(rv, i, (void*) si_py)) {
          /* error handling */
          Py_DECREF(rv);
@@ -228,11 +334,17 @@ PyInit_signal_(void) {
    if (!(sd0 = sdarray_new(buflen)) || !(sd1 = sdarray_new(buflen))) return NULL;
    sigfillset(&ss_all);
    
-   /*SigInfo object setup */
+   /* SigInfo type setup */
    siginfoType.tp_new = PyType_GenericNew;
    if (PyType_Ready(&siginfoType) < 0) return NULL;
    Py_INCREF(&siginfoType);
    PyModule_AddObject(m, "SigInfo", (PyObject *)&siginfoType);
+   
+   /* SigSet type setup */
+   SigSetType.tp_new = PyType_GenericNew;
+   if (PyType_Ready(&SigSetType) < 0) return NULL;
+   Py_INCREF(&SigSetType);
+   PyModule_AddObject(m, "SigSet", (PyObject *)&SigSetType);
    
    return m;
 }
