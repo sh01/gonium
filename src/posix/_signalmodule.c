@@ -19,6 +19,11 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* Give productive feedback to people trying to link this with Python 2.x */
+#if PY_MAJOR_VERSION < 3
+#error This file requires python >= 3.0
+#endif
+
 static PyObject* saved_signals_get(PyObject*, PyObject*);
 
 typedef struct sdarray {
@@ -28,7 +33,7 @@ typedef struct sdarray {
    volatile sig_atomic_t nonempty;
 } sdarray_t;
 
-sdarray_t *volatile sd0, *sd1;
+static sdarray_t *volatile sd0=NULL, *sd1=NULL;
 sigset_t ss_hp, ss_all; // signals to store in slot 0
 
 struct signaldata **signal_data, **signal_data_buf;
@@ -43,19 +48,23 @@ static sdarray_t* sdarray_new(size_t buflen) {
    return rv;
 }
 
-void sig_handler(int sig, siginfo_t *si, void *context) {
+static int wakeup_fd = -1;
+
+static void sig_handler(int sig, siginfo_t *si, void *context) {
+   char c = 0;
+   
    if (sd0->used >= sd0->len) { /* overlow :( */
       /* Store high-priority signals, regardless */
       if (sigismember(&ss_hp, sig) == 1) sd0->data[sd0->used] = *si;
       return;
    }
    sd0->data[sd0->used++] = *si;
+   if ((!sd0->nonempty) && (wakeup_fd >= 0)) write(wakeup_fd, &c, 1);
    sd0->nonempty = 1;
 }
 
 typedef struct {
    PyObject_HEAD
-   /* Type-specific fields go here. */
    siginfo_t data;
 } SigInfo;
 
@@ -118,7 +127,7 @@ static PyBufferProcs SigInfo_asbuf = {
 
 static PyTypeObject siginfoType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-   "signal_.SigInfo",         /* tp_name */
+   "_signal.SigInfo",         /* tp_name */
    sizeof(SigInfo),           /* tp_basicsize */
    0,                         /* tp_itemsize */
    0,                         /* tp_dealloc */
@@ -160,7 +169,6 @@ static PyTypeObject siginfoType = {
 
 typedef struct {
    PyObject_HEAD
-   /* Type-specific fields go here. */
    sigset_t ss;
 } SigSet;
 
@@ -250,7 +258,7 @@ static PyBufferProcs SigSet_asbuf = {
 
 static PyTypeObject SigSetType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-   "signal_.SigSet",          /* tp_name */
+   "_signal.SigSet",          /* tp_name */
    sizeof(SigSet),            /* tp_basicsize */
    0,                         /* tp_itemsize */
    0,                         /* tp_dealloc */
@@ -290,16 +298,62 @@ static PyTypeObject SigSetType = {
 };
 
 
+static PyObject *sighandler_install(SigSet *self, PyObject *args) {
+   int sig, flags=0;
+   struct sigaction sa;
+   
+   if (!PyArg_ParseTuple(args, "i|i", &sig, &flags)) return NULL;
+   sa.sa_sigaction = sig_handler;
+   sa.sa_mask = ss_all;
+   sa.sa_flags = (SA_SIGINFO | flags);
+   
+   if (sigaction(sig, &sa, NULL)) {
+      PyErr_SetFromErrno(PyExc_ValueError);
+      return NULL;
+   }
+   Py_RETURN_NONE;
+}
+
+/* idea copied from python's signal.set_wakeup_fd */
+static PyObject *set_wakeup_fd(SigSet *self, PyObject *args) {
+   sigset_t ss_tmp;
+   PyObject *arg1;
+   int fd_new, fd_old;
+   
+   if (!PyArg_ParseTuple(args, "O", &arg1)) return NULL;
+   if (arg1 == Py_None) fd_new = -1;
+   else if (((fd_new = PyObject_AsFileDescriptor(arg1)) == -1) && PyErr_Occurred())
+      return NULL;
+   
+   sigprocmask(SIG_SETMASK, &ss_all, &ss_tmp);
+   fd_old = wakeup_fd;
+   wakeup_fd = fd_new;
+   sigprocmask(SIG_SETMASK, &ss_tmp, NULL);
+   
+   return PyLong_FromLong(fd_old);
+}
+
 
 static PyMethodDef module_methods[] = {
-   {"saved_signals_get", saved_signals_get, METH_VARARGS, "Return tuple containing saved signals."},
+   {"saved_signals_get", saved_signals_get, METH_VARARGS,
+    "saved_signals_get() -> signals \n\
+     Return tuple containing saved signals."},
+   {"set_wakeup_fd", (PyCFunction)set_wakeup_fd, METH_VARARGS,
+    "set_wakeup_fd(fd:int) -> int\n\
+     Set new fd to write to when a signal is caught after last call to\n\
+     saved_signals_get(); returns old value. Specify a negative value\n\
+     or None to disable."},
+   {"sighandler_install", (PyCFunction)sighandler_install, METH_VARARGS,
+    "sighandler_install(signal:int, flags:int=0) -> NoneType\n\
+     Start catching specified signal. Flags are as for this system's\n\
+     sigaction()."},
    {NULL, NULL, 0, NULL}
 };
 
 
-static struct PyModuleDef signal_module = {
+static struct PyModuleDef _signalmodule = {
    PyModuleDef_HEAD_INIT,
-   "signal_",
+   "_signal",
    NULL,
    -1,
    module_methods
@@ -313,42 +367,46 @@ static PyObject* saved_signals_get(PyObject *self, PyObject *args) {
    size_t i, used;
    SigInfo *si_py;
    
-   PyObject *rv;
+   PyObject *psd, *rv;
    
    if (!PyArg_ParseTuple(args,"")) return NULL;
-   if (!sd0->nonempty) return PyTuple_New(0);
+   if (!sd0->nonempty) return Py_BuildValue("Ni", PyTuple_New(0), 0);
+   sda_tmp = sd1;
+   sd1 = sd0;
    sigprocmask(SIG_SETMASK, &ss_all, &ss_tmp);
-   sda_tmp = sd0;
-   sd0 = sd1;
-   sd1 = sda_tmp;
+   sd0 = sda_tmp;
    sigprocmask(SIG_SETMASK, &ss_tmp, NULL);
    
    used = sd1->used;
-   if (!(rv = PyTuple_New(used))) return NULL;
+   if (!(psd = PyTuple_New(used))) return NULL;
    sia = (void*) sd1->data;
 
    for (i = 0; i < used; i++) {
       if (!(si_py = PyObject_New(SigInfo, &siginfoType)) ||
-         PyTuple_SetItem(rv, i, (void*) si_py)) {
+         PyTuple_SetItem(psd, i, (void*) si_py)) {
          /* error handling */
-         Py_DECREF(rv);
+         Py_DECREF(psd);
          return NULL;
       }
       si_py->data = sia[i];
    }
+   rv = Py_BuildValue("Ni", psd, (sd1->used >= sd1->len) ? 1 : 0);
+   
    sd1->used = 0;
    sd1->nonempty = 0;
+   
    return rv;
 }
 
 
 PyMODINIT_FUNC
-PyInit_signal_(void) {
-   PyObject *m = PyModule_Create(&signal_module);
+PyInit__signal(void) {
+   PyObject *m = PyModule_Create(&_signalmodule);
    if (!m) return NULL;
    
    size_t buflen = 256;
-   if (!(sd0 = sdarray_new(buflen)) || !(sd1 = sdarray_new(buflen))) return NULL;
+   if (!sd0 && !(sd0 = sdarray_new(buflen))) return NULL;
+   if (!sd1 && !(sd1 = sdarray_new(buflen))) return NULL;
    sigfillset(&ss_all);
    
    /* SigInfo type setup */
@@ -360,6 +418,24 @@ PyInit_signal_(void) {
    if (PyType_Ready(&SigSetType) < 0) return NULL;
    Py_INCREF(&SigSetType);
    PyModule_AddObject(m, "SigSet", (PyObject *)&SigSetType);
+   
+   /* sigaction() posix constants */
+   PyModule_AddObject(m, "SA_NOCLDSTOP", PyLong_FromLong(SA_NOCLDSTOP));
+   PyModule_AddObject(m, "SA_ONSTACK", PyLong_FromLong(SA_ONSTACK));
+   PyModule_AddObject(m, "SA_RESETHAND", PyLong_FromLong(SA_RESETHAND));
+   PyModule_AddObject(m, "SA_RESTART", PyLong_FromLong(SA_RESTART));
+   PyModule_AddObject(m, "SA_SIGINFO", PyLong_FromLong(SA_SIGINFO));
+   PyModule_AddObject(m, "SA_NOCLDWAIT", PyLong_FromLong(SA_NOCLDWAIT));
+   PyModule_AddObject(m, "SA_NODEFER", PyLong_FromLong(SA_NODEFER));
+   /* sigprocmask() posix constants. These aren't currently directly useful
+      for using this module, but are very much so for
+      sigprocmask-through-ctypes usage. Since this relates to the primary
+      functions of this module, and exposing them is effectively free, we do
+      so.
+    */
+   PyModule_AddObject(m, "SIG_BLOCK", PyLong_FromLong(SIG_BLOCK));
+   PyModule_AddObject(m, "SIG_SETMASK", PyLong_FromLong(SIG_SETMASK));
+   PyModule_AddObject(m, "SIG_UNBLOCK", PyLong_FromLong(SIG_UNBLOCK));
    
    return m;
 }

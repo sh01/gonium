@@ -20,7 +20,7 @@ from distutils.core import setup, Extension
 if (sys.version_info[0] <= 2):
    raise Exception('This gonium version needs a python >= 3.0') 
 
-module1 = Extension('gonium.posix.signal_', sources = ['src/posix/signal_module.c'])
+module1 = Extension('gonium.posix._signal', sources = ['src/posix/_signalmodule.c'])
 
 
 setup(name='gonium',
