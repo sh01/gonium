@@ -106,22 +106,22 @@ int siginfo_asbuf(SigInfo *self, Py_buffer *view, int flags) {
 int siginfo_idx[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14};
 
 static PyGetSetDef siginfo_getsetters[] = {
-    {"signo", (getter)siginfo_getter, (setter)NULL, "Signal number", siginfo_idx},
-    {"errno", (getter)siginfo_getter, (setter)NULL, "An errno value", siginfo_idx+1},
-    {"code", (getter)siginfo_getter, (setter)NULL, "Signal code", siginfo_idx+2},
-    {"pid", (getter)siginfo_getter, (setter)NULL, "Sending process ID", siginfo_idx+3},
-    {"uid", (getter)siginfo_getter, (setter)NULL, "Real user ID of sending process", siginfo_idx+4},
-    {"status", (getter)siginfo_getter, (setter)NULL, "Exit value or signal", siginfo_idx+5},
-    {"utime", (getter)siginfo_getter, (setter)NULL, "User time consumed", siginfo_idx+6},
-    {"stime", (getter)siginfo_getter, (setter)NULL, "System time consumed", siginfo_idx+7},
-    {"value_int", (getter)siginfo_getter, (setter)NULL, "Signal value, int", siginfo_idx+8},
-    {"value_ptr", (getter)siginfo_getter, (setter)NULL, "Signal value, ptr", siginfo_idx+9},
-    {"int", (getter)siginfo_getter, (setter)NULL, "POSIX.1b signal", siginfo_idx+10},
-    {"ptr", (getter)siginfo_getter, (setter)NULL, "POSIX.1b signal", siginfo_idx+11},
-    {"addr", (getter)siginfo_getter, (setter)NULL, "Memory location which caused fault", siginfo_idx+12},
-    {"band", (getter)siginfo_getter, (setter)NULL, "Band event", siginfo_idx+13},
-    {"fd", (getter)siginfo_getter, (setter)NULL, "File descriptor", siginfo_idx+14},
-    {NULL}  /* Sentinel */
+   {"signo", (getter)siginfo_getter, (setter)NULL, "Signal number", siginfo_idx},
+   {"errno", (getter)siginfo_getter, (setter)NULL, "An errno value", siginfo_idx+1},
+   {"code", (getter)siginfo_getter, (setter)NULL, "Signal code", siginfo_idx+2},
+   {"pid", (getter)siginfo_getter, (setter)NULL, "Sending process ID", siginfo_idx+3},
+   {"uid", (getter)siginfo_getter, (setter)NULL, "Real user ID of sending process", siginfo_idx+4},
+   {"status", (getter)siginfo_getter, (setter)NULL, "Exit value or signal", siginfo_idx+5},
+   {"utime", (getter)siginfo_getter, (setter)NULL, "User time consumed", siginfo_idx+6},
+   {"stime", (getter)siginfo_getter, (setter)NULL, "System time consumed", siginfo_idx+7},
+   {"value_int", (getter)siginfo_getter, (setter)NULL, "Signal value, int", siginfo_idx+8},
+   {"value_ptr", (getter)siginfo_getter, (setter)NULL, "Signal value, ptr", siginfo_idx+9},
+   {"int", (getter)siginfo_getter, (setter)NULL, "POSIX.1b signal", siginfo_idx+10},
+   {"ptr", (getter)siginfo_getter, (setter)NULL, "POSIX.1b signal", siginfo_idx+11},
+   {"addr", (getter)siginfo_getter, (setter)NULL, "Memory location which caused fault", siginfo_idx+12},
+   {"band", (getter)siginfo_getter, (setter)NULL, "Band event", siginfo_idx+13},
+   {"fd", (getter)siginfo_getter, (setter)NULL, "File descriptor", siginfo_idx+14},
+   {NULL}  /* Sentinel */
 };
 
 
@@ -219,26 +219,35 @@ static PyObject *SigSet_remove(SigSet *self, PyObject *args) {
    Py_RETURN_NONE;
 }
 
-static PyObject *SigSet_in(SigSet *self, PyObject *args) {
+static int SigSet_in(SigSet *self, PyObject *arg) {
    int signal, rv;
-   if (!PyArg_ParseTuple(args, "i", &signal)) return NULL;
+   if (((signal = (int) PyLong_AsLong(arg)) == -1) && PyErr_Occurred()) return -1;
    rv = sigismember(&self->ss, signal);
-   if (rv == 0) Py_RETURN_FALSE;
-   if (rv == 1) Py_RETURN_TRUE;
+   if (rv == 0) return 0;
+   if (rv == 1) return 1;
    if (rv == -1) PyErr_SetFromErrno(PyExc_ValueError);
-   return NULL;
+   return -1;
 }
 
 
 static PyMethodDef SigSet_methods[] = {
-    {"clear", (PyCFunction)SigSet_clear, METH_NOARGS, "sigemptyset() wrapper: initialize sigset to empty"},
-    {"fill", (PyCFunction)SigSet_fill, METH_NOARGS, "sigfillset() wrapper: initialize sigset to full"},
-    {"add", (PyCFunction)SigSet_add, METH_VARARGS, "sigaddset() wrapper: add signal to sigset"},
-    {"remove", (PyCFunction)SigSet_remove, METH_VARARGS, "sigdelset() wrapper: remove signal from sigset"},
-    {"__contains__", (PyCFunction)SigSet_in, METH_VARARGS, "sigismember() wrapper: membership test"},
-    {NULL}  /* Sentinel */
+   {"clear", (PyCFunction)SigSet_clear, METH_NOARGS, "sigemptyset() wrapper: initialize sigset to empty"},
+   {"fill", (PyCFunction)SigSet_fill, METH_NOARGS, "sigfillset() wrapper: initialize sigset to full"},
+   {"add", (PyCFunction)SigSet_add, METH_VARARGS, "sigaddset() wrapper: add signal to sigset"},
+   {"remove", (PyCFunction)SigSet_remove, METH_VARARGS, "sigdelset() wrapper: remove signal from sigset"},
+   {NULL}  /* Sentinel */
 };
 
+static PySequenceMethods SigSetassequence = {
+   NULL,                     /* sq_length */
+   NULL,                     /* sq_concat */
+   NULL,                     /* sq_repeat */
+   NULL,                     /* sq_item */
+   NULL,                     /* sq_slice */
+   NULL,                     /* sq_ass_item */
+   NULL,                     /* sq_ass_slice */
+   (objobjproc)SigSet_in,    /* sq_contains */
+};
 
 static PyTypeObject SigSetType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
@@ -252,7 +261,7 @@ static PyTypeObject SigSetType = {
    0,                         /* tp_compare */
    0,                         /* tp_repr */
    0,                         /* tp_as_number */
-   0,                         /* tp_as_sequence */
+   &SigSetassequence,         /* tp_as_sequence */
    0,                         /* tp_as_mapping */
    0,                         /* tp_hash  */
    0,                         /* tp_call */
@@ -284,8 +293,8 @@ static PyTypeObject SigSetType = {
 
 
 static PyMethodDef module_methods[] = {
-    {"saved_signals_get", saved_signals_get, METH_VARARGS, "Return tuple containing saved signals."},
-    {NULL, NULL, 0, NULL}
+   {"saved_signals_get", saved_signals_get, METH_VARARGS, "Return tuple containing saved signals."},
+   {NULL, NULL, 0, NULL}
 };
 
 
