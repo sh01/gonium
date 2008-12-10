@@ -156,6 +156,14 @@ static PyTypeObject siginfoType = {
    0,	                      /* tp_methods */
    0,                         /* tp_members */
    siginfo_getsetters,        /* tp_getset */
+   0,                         /* tp_base */
+   0,                         /* tp_dict */
+   0,                         /* tp_descr_get */
+   0,                         /* tp_descr_set */
+   0,                         /* tp_dictoffset */
+   0,                         /* tp_init */
+   0,                         /* tp_alloc */
+   PyType_GenericNew          /* tp_new */
 };
 
 
@@ -263,13 +271,14 @@ static PyTypeObject SigSetType = {
    SigSet_methods,            /* tp_methods */
    0,                         /* tp_members */
    0,                         /* tp_getset */
-   0,                         /* tp_getset */
    0,                         /* tp_base */
    0,                         /* tp_dict */
    0,                         /* tp_descr_get */
    0,                         /* tp_descr_set */
    0,                         /* tp_dictoffset */
    (initproc)SigSet_init,     /* tp_init */
+   0,                         /* tp_alloc */
+   PyType_GenericNew          /* tp_new */
 };
 
 
@@ -335,13 +344,11 @@ PyInit_signal_(void) {
    sigfillset(&ss_all);
    
    /* SigInfo type setup */
-   siginfoType.tp_new = PyType_GenericNew;
    if (PyType_Ready(&siginfoType) < 0) return NULL;
    Py_INCREF(&siginfoType);
    PyModule_AddObject(m, "SigInfo", (PyObject *)&siginfoType);
    
    /* SigSet type setup */
-   SigSetType.tp_new = PyType_GenericNew;
    if (PyType_Ready(&SigSetType) < 0) return NULL;
    Py_INCREF(&SigSetType);
    PyModule_AddObject(m, "SigSet", (PyObject *)&SigSetType);
