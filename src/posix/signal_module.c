@@ -83,25 +83,11 @@ static PyObject * siginfo_getter(SigInfo *self, void *closure) {
   return NULL;
 }
 
-/* -- currently defective
-int siginfo_asbuf(SigInfo *self, Py_buffer *view, int flags) {
-   if (flags & (PyBUF_WRITABLE | PyBUF_STRIDES)) {
-      return -1;
-   }
-   view->buf = &self->data;
-   view->len = sizeof(siginfo_t);
-   view->readonly = 1;
-   view->format = NULL;
-   if (flags & PyBUF_ND) {
-      view->ndim = 1;
-      if (!(view->shape = PyMem_Malloc(sizeof(Py_ssize_t)))) return -1;
-      view->shape[0] = sizeof(siginfo_t);
-   } else {
-      view->ndim = 0;
-      view->shape = NULL;
-   }
-   return 0;
-}*/
+
+int SigInfo_getbuf(SigInfo *self, Py_buffer *view, int flags) {
+   return PyBuffer_FillInfo(view, (PyObject*) self, (void*) &self->data,
+                            sizeof(siginfo_t), 0, 0);
+}
 
 int siginfo_idx[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14};
 
@@ -125,6 +111,11 @@ static PyGetSetDef siginfo_getsetters[] = {
 };
 
 
+static PyBufferProcs SigInfo_asbuf = {
+   (getbufferproc) SigInfo_getbuf,
+   NULL
+};
+
 static PyTypeObject siginfoType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
    "signal_.SigInfo",         /* tp_name */
@@ -144,7 +135,7 @@ static PyTypeObject siginfoType = {
    0,                         /* tp_str */
    0,                         /* tp_getattro */
    0,                         /* tp_setattro */
-   0,                         /* tp_as_buffer */
+   &SigInfo_asbuf,            /* tp_as_buffer */
    Py_TPFLAGS_DEFAULT,        /* tp_flags */
    "This type is a thin wrapper around C siginfo_t objects.", /* tp_doc */
    0,		              /* tp_traverse */
@@ -176,9 +167,7 @@ typedef struct {
 
 static int SigSet_init(SigSet *self, PyObject *args, PyObject *kwargs) {
    static char *kwlist[] = {NULL};
-   void *bogus;
-   // faulty!
-   if (!PyArg_ParseTupleAndKeywords(args, kwargs, "", kwlist, &bogus)) return -1;
+   if (!PyArg_ParseTupleAndKeywords(args, kwargs, "", kwlist)) return -1;
    if (sigemptyset(&self->ss)) {
       PyErr_SetFromErrno(PyExc_SystemError);
       return -1;
@@ -229,6 +218,11 @@ static int SigSet_in(SigSet *self, PyObject *arg) {
    return -1;
 }
 
+int SigSet_getbuf(SigSet *self, Py_buffer *view, int flags) {
+   return PyBuffer_FillInfo(view, (PyObject*) self, (void*) &self->ss,
+                            sizeof(sigset_t), 0, 0);
+}
+
 
 static PyMethodDef SigSet_methods[] = {
    {"clear", (PyCFunction)SigSet_clear, METH_NOARGS, "sigemptyset() wrapper: initialize sigset to empty"},
@@ -247,6 +241,11 @@ static PySequenceMethods SigSetassequence = {
    NULL,                     /* sq_ass_item */
    NULL,                     /* sq_ass_slice */
    (objobjproc)SigSet_in,    /* sq_contains */
+};
+
+static PyBufferProcs SigSet_asbuf = {
+   (getbufferproc) SigSet_getbuf,
+   NULL
 };
 
 static PyTypeObject SigSetType = {
@@ -268,7 +267,7 @@ static PyTypeObject SigSetType = {
    0,                         /* tp_str */
    0,                         /* tp_getattro */
    0,                         /* tp_setattro */
-   0,                         /* tp_as_buffer */
+   &SigSet_asbuf,             /* tp_as_buffer */
    Py_TPFLAGS_DEFAULT,        /* tp_flags */
    "This type is a thin wrapper around C sigset_t objects.", /* tp_doc */
    0,		              /* tp_traverse */
