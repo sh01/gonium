@@ -128,18 +128,18 @@ class AsyncDataStream:
    def send_data(self, buffers:collections.Sequence, *args, **kwargs):
       """Like send_bytes(), but encodes any strings with self.output_encoding."""
       enc = self.output_encoding
-      for buf in buffers:
-         try:
+      def encode(buf):
+         if (hasattr(buf, 'encode')):
             buf = buf.encode(enc)
-         except AttributError:
-            pass
-         self._outbuf.append(buf)
-      self.send_bytes(buffers, *args, **kwargs)
+         return buf
+      
+      self.send_bytes(map(encode, buffers), *args, **kwargs)
       
    def send_bytes(self, buffers:collections.Sequence, flush=True):
       """Append set of buffers to pending output and attempt to push.
          Buffers elements must be bytes, bytearray, memoryview or similar."""
       had_pending = bool(self._outbuf)
+      self._outbuf.extend(buffers)
       if (flush):
          self._output_write(had_pending, _known_writable=False)
 
