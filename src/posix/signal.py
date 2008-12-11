@@ -15,11 +15,63 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# Note that the code in _signal is not thread-safe or reentrant; its functions
-# should only be called from a single thread, and not from python signal
-# handlers.
+import fcntl
+import logging
+import os
 
 from . import _signal
+
+_logger = logging.getLogger('gonium.posix.signal')
+_log = _logger.log
+
+class SignalCatcher:
+   """Signal-catching object. Shouldn't be instantiated more than once."""
+   _m = _signal
+   def __init__(self, ed, bufsize:int=256):
+      self._pipe_setup(ed)
+      self.bufsize = bufsize
+      self.sd_buffers_resize(bufsize)
+      self._m.set_wakeup_fd(self._pipe_w)
+   
+   def _pipe_setup(self, ed):
+      """Build signal pipe"""
+      (pipe_r, pipe_w) = os.pipe()
+      self._pipe_r = pipe_r
+      self._pipe_w = pipe_w
+      fcntl.fcntl(pipe_w, fcntl.F_SETFL, fcntl.fcntl(pipe_w,fcntl.F_GETFL) | os.O_NONBLOCK)
+      if (ed is None):
+         return
+      self._pipe_r_fdw = ed.fd_wrap(pipe_r)
+      self._pipe_r_fdw.process_readability = self._wakeup
+      self._pipe_r_fdw.read_r()
+   
+   def handle_overflow(self):
+      """Called on overflow. This implementation does nothing."""
+      pass
+   
+   def handle_signal(self, siginfo:_m.SigInfo):
+      """Handle signal. This implementation does nothing."""
+      pass
+   
+   def __getattr__(self, name):
+      """Forward attribute access to module"""
+      return getattr(self._m,name)
+   
+   def _wakeup(self):
+      """Fetch signals and read and discard data from read end of wrapped pipe"""
+      d = os.read(self._pipe_r, 10240)
+      if (not d):
+         self._pipe_r_fdw.close()
+      (sd, overflow) = self._m.saved_signals_get()
+      if (overflow):
+         self.handle_overflow()
+      for siginfo in sd:
+         try:
+            self.handle_signal(siginfo)
+         except Exception:
+            _log(40, 'Exception in signal handler called on siginfo'
+                      '{0}:'.format(siginfo), exc_info=True)
+
 
 def _selftest():
    import fcntl
@@ -29,6 +81,10 @@ def _selftest():
    import sys
    import time
    from signal import SIGUSR1
+   
+   from ..fdm import ED_get, Timer
+   from .._debugging import streamlogger_setup; streamlogger_setup()
+   
    print('==== Setup ====')
    (read_fd, write_fd) = os.pipe()
    fcntl.fcntl(write_fd, fcntl.F_SETFL, fcntl.fcntl(write_fd,fcntl.F_GETFL) | os.O_NONBLOCK)
@@ -37,33 +93,35 @@ def _selftest():
    
    ppid = os.getpid()
    
+   sigcount_send = 1024
    if (os.fork() == 0):
       time.sleep(1)
       os.close(sys.stdin.fileno())
       os.close(sys.stdout.fileno())
       os.close(sys.stderr.fileno())
-      for i in range(1024):
+      for i in range(sigcount_send):
          time.sleep(0.0001)
          os.kill(ppid,SIGUSR1)
       sys.exit()
    
-   print('==== Catching signals. ====')
-   timeout = time.time() + 10
+   ed = ED_get()()
+   sc = SignalCatcher(ed)
    sigcount = 0
-   while (timeout > time.time()):
-      try:
-         (r,w,e) = select.select([read_fd],[],[],0.1)
-      except select.error:
-         pass
-      if (r):
-         os.read(read_fd,1024)
-         (signals, overflow) = _signal.saved_signals_get()
-         print('WE GET SIGNAL: {0!a}'.format(signals))
-         if (overflow):
-            print ('...overflowed.')
-         sigcount += len(signals)
    
-   print('Caught {0} signals.'.format(sigcount))
+   def sighandler(siginfo):
+      nonlocal sigcount
+      sigcount += 1
+      print('WE GET SIGNAL: {0!a}'.format(siginfo))
+   sc.handle_signal = sighandler
+   def ofhandler():
+      print('...overflowed.')
+   sc.handle_overflow = ofhandler
+   Timer(ed, 10, ed.shutdown)
+   
+   print('==== Catching signals. ====')
+   ed.event_loop()
+   
+   print('Caught {0} of {1} signals.'.format(sigcount, sigcount_send))
    if (sigcount == 0):
       raise Exception("Expected more signals.")
    
