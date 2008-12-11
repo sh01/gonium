@@ -17,13 +17,10 @@
 
 import time
 
-format_strings = {
-   'time':'%Y-%m-%d %H:%M:%S'
-   }
-
+fmt_TIME = '%Y-%m-%d %H:%M:%S'
 
 def seconds_hr_absolute(unixtime):
-   return time.strftime(format_strings['time'], time.localtime(unixtime))
+   return time.strftime(fmt_TIME, time.localtime(unixtime))
 
 
 def seconds_hr_relative(seconds, precision=0):

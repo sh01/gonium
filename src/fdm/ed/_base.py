@@ -213,6 +213,11 @@ class Timer:
          return
       self._ed.register_timer(self)
 
+   def cancel(self):
+      """Stop timer, cancelling sheduled callback."""
+      self._ed.unregister_timer(self)
+      self._expire_ts = None
+
    def fire(self):
       """Fire timer, executing callback and (if persistent) bumping expire time"""
       try:

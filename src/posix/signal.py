@@ -20,12 +20,16 @@ import logging
 import os
 
 from . import _signal
+from ._signal import SigSet
 
 _logger = logging.getLogger('gonium.posix.signal')
 _log = _logger.log
 
 class SignalCatcher:
-   """Signal-catching object. Shouldn't be instantiated more than once."""
+   """Signal-catching class; shouldn't be instantiated more than once.
+      Note that while they aren't listed in the auto-generated docs, you can
+      also access all attributes and methods of gonium.posix._signal as
+      attributes of objects of this type."""
    _m = _signal
    def __init__(self, ed, bufsize:int=256):
       self._pipe_setup(ed)
