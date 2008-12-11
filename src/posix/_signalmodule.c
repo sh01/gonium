@@ -28,32 +28,66 @@ static PyObject* saved_signals_get(PyObject*, PyObject*);
 
 typedef struct sdarray {
    volatile siginfo_t *data;
-   volatile size_t len;
    volatile size_t used;
    volatile sig_atomic_t nonempty;
 } sdarray_t;
 
+
+static size_t sdalen;
 static sdarray_t *volatile sd0=NULL, *sd1=NULL;
 sigset_t ss_hp, ss_all; // signals to store in slot 0
-
 struct signaldata **signal_data, **signal_data_buf;
+static int wakeup_fd = -1;
+
 
 static sdarray_t* sdarray_new(size_t buflen) {
    sdarray_t *rv = PyMem_Malloc(sizeof(sdarray_t));
-   
    if (!(rv->data = PyMem_Malloc(sizeof(siginfo_t)*buflen))) return NULL;
-   rv->len = buflen;
    rv->used = 0;
    rv->nonempty = 0;
    return rv;
 }
 
-static int wakeup_fd = -1;
+static int sdarrays_realloc(size_t buflen) {
+   void *a0, *a1;
+   sigset_t ss_tmp;
+   size_t cpyelcnt;
+   if (!(a0 = PyMem_Malloc(sizeof(siginfo_t)*buflen))) return -1;
+   if (!(a1 = PyMem_Malloc(sizeof(siginfo_t)*buflen))) {
+      PyMem_Free(a0);
+      return -1;
+   }
+   sigprocmask(SIG_SETMASK, &ss_all, &ss_tmp);
+   cpyelcnt = sdalen;
+   if (cpyelcnt > buflen) cpyelcnt = buflen;
+   
+   PyMem_Free((void*) sd1->data);
+   sd1->data = a1;
+   memcpy(a0, (void*) sd0->data, sizeof(siginfo_t)*cpyelcnt);
+   PyMem_Free((void*) sd0->data);
+   sd0->data = a0;
+   sdalen = buflen;
+   if (sd0->used > buflen) sd0->used = buflen;
+   sigprocmask(SIG_SETMASK, &ss_tmp, NULL);
+   return 0;
+}
+
+static PyObject* sdas_resize(PyObject *self, PyObject *args) {
+   Py_ssize_t len;
+   if (!PyArg_ParseTuple(args, "n", &len)) return NULL;
+   if (len < 1) {
+      PyErr_SetString(PyExc_ValueError, "Argument 0 must be positive.");
+      return NULL;
+   }
+   if (sdarrays_realloc(len)) return NULL;
+   Py_RETURN_NONE;
+}
+
 
 static void sig_handler(int sig, siginfo_t *si, void *context) {
    char c = 0;
    
-   if (sd0->used >= sd0->len) { /* overlow :( */
+   if (sd0->used >= sdalen) { /* overlow :( */
       /* Store high-priority signals, regardless */
       if (sigismember(&ss_hp, sig) == 1) sd0->data[sd0->used] = *si;
       return;
@@ -297,6 +331,22 @@ static PyTypeObject SigSetType = {
    PyType_GenericNew          /* tp_new */
 };
 
+static PyObject* set_hp_sigset(PyObject *self, PyObject *args) {
+   PyObject *arg1 = Py_None;
+   SigSet *rv;
+   if (!PyArg_ParseTuple(args, "|O", &arg1)) return NULL;
+   if (arg1 != Py_None) {
+      if (!PyObject_IsInstance(arg1, (void*) &SigSetType)) {
+         PyErr_SetString(PyExc_TypeError, "Optional argument 0 must be None or SigSet instance.");
+         return NULL;
+      }
+   }
+   if (!(rv = PyObject_New(SigSet, &SigSetType))) return NULL;
+   rv->ss = ss_hp;
+   if (arg1 != Py_None) ss_hp = ((SigSet*) arg1)->ss;
+   return (void*) rv;
+}
+
 
 static PyObject *sighandler_install(SigSet *self, PyObject *args) {
    int sig, flags=0;
@@ -343,10 +393,18 @@ static PyMethodDef module_methods[] = {
      Set new fd to write to when a signal is caught after last call to\n\
      saved_signals_get(); returns old value. Specify a negative value\n\
      or None to disable."},
+   {"set_hp_sigset", set_hp_sigset, METH_VARARGS,
+    "set_hp_sigset(signals:SigSet) -> SigSet\n\
+     Set new 'highpriority' signalset. Signals in this set will be saved,\n\
+     even after the buffer has been filled; for this purpose, the last saved\n\
+     signal will be overwritten."},
    {"sighandler_install", (PyCFunction)sighandler_install, METH_VARARGS,
     "sighandler_install(signal:int, flags:int=0) -> NoneType\n\
      Start catching specified signal. Flags are as for this system's\n\
      sigaction()."},
+   {"sd_buffers_resize" , sdas_resize, METH_VARARGS,
+    "sd_buffers_resize(count:int) -> NoneType\n\
+     Resize signal data buffers to a size sufficent to store <count> signals."},
    {NULL, NULL, 0, NULL}
 };
 
@@ -368,7 +426,6 @@ static PyObject* saved_signals_get(PyObject *self, PyObject *args) {
    SigInfo *si_py;
    
    PyObject *psd, *rv;
-   
    if (!PyArg_ParseTuple(args,"")) return NULL;
    if (!sd0->nonempty) return Py_BuildValue("Ni", PyTuple_New(0), 0);
    sda_tmp = sd1;
@@ -390,7 +447,7 @@ static PyObject* saved_signals_get(PyObject *self, PyObject *args) {
       }
       si_py->data = sia[i];
    }
-   rv = Py_BuildValue("Ni", psd, (sd1->used >= sd1->len) ? 1 : 0);
+   rv = Py_BuildValue("Ni", psd, (sd1->used >= sdalen) ? 1 : 0);
    
    sd1->used = 0;
    sd1->nonempty = 0;
@@ -404,10 +461,13 @@ PyInit__signal(void) {
    PyObject *m = PyModule_Create(&_signalmodule);
    if (!m) return NULL;
    
-   size_t buflen = 256;
-   if (!sd0 && !(sd0 = sdarray_new(buflen))) return NULL;
-   if (!sd1 && !(sd1 = sdarray_new(buflen))) return NULL;
-   sigfillset(&ss_all);
+   if (!sd0 && !sd1) {
+      sdalen = 256;
+      if (!(sd0 = sdarray_new(sdalen))) return NULL;
+      if (!(sd1 = sdarray_new(sdalen))) return NULL;
+      sigfillset(&ss_all);
+      sigemptyset(&ss_hp);
+   }
    
    /* SigInfo type setup */
    if (PyType_Ready(&siginfoType) < 0) return NULL;
