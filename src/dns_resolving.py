@@ -918,3 +918,5 @@ def _selftest():
    
    print('Self-test passed.')
 
+if (__name__ == '__main__'):
+   _selftest()

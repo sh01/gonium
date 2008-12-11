@@ -129,3 +129,5 @@ def _selftest():
    if (sigcount == 0):
       raise Exception("Expected more signals.")
    
+if (__name__ == '__main__'):
+   _selftest()

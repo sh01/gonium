@@ -20,6 +20,7 @@
 import collections
 import logging
 import subprocess
+import sys
 from collections import deque
 from errno import EAGAIN, ECONNRESET, EPIPE, EINPROGRESS, EINTR
 from select import poll, POLLOUT
@@ -338,7 +339,6 @@ class AsyncSockServer:
 
 def _selftest(out=None):
    import os
-   import sys
    from . import ED_get, Timer
    from subprocess import PIPE
    from .._debugging import streamlogger_setup; streamlogger_setup()
