@@ -43,7 +43,7 @@ class DomainName(bytes):
    LABEL_LENGTH_LIMIT = 63
    COMP_DEPTH_LIMIT = 256
    def __init__(self, *args, **kwargs):
-      bytes.__init__(self, *args, **kwargs)
+      bytes.__init__(self)
       if (len(self) > self.NAME_LENGTH_LIMIT):
          raise ValueError('{0!a} is longer than {0!a}, which is the maximum'
         'length allowed for domain names'.format(self, self.NAME_LENGTH_LIMIT))
