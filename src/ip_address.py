@@ -24,7 +24,7 @@ import struct
 def ip_address_build(ip_data):
    if (isinstance(ip_data, IPAddressBase)):
       return ip_data
-   if (isinstance(ip_data, (int, long))):
+   if (isinstance(ip_data, int)):
       try:
          return IPAddressV4(ip_data)
       except ValueError:
@@ -32,7 +32,7 @@ def ip_address_build(ip_data):
             return IPAddressV6(ip_data)
          except ValueError:
             pass
-   elif (isinstance(ip_data, basestring)):
+   elif (isinstance(ip_data, (str, bytes, bytearray))):
       try:
          return IPAddressV4.fromstring(ip_data)
       except socket.error:
@@ -41,7 +41,7 @@ def ip_address_build(ip_data):
          except socket.error:
             pass
    else:
-      raise TypeError('Invalid type {0} for argument ip_data of value {1} (expected numeric or string type).'.format((type(ip_data), ip_data)))
+      raise TypeError('Invalid type {0} for argument ip_data of value {1} (expected numeric or string type).'.format(type(ip_data), ip_data))
    
    raise ValueError('Unable to convert argument {0} to a v4 or v6 ip address.'.foamt(ip_data))
 
@@ -59,7 +59,7 @@ class IPAddressBase(object):
    @classmethod
    def fromstring(cls, ip_string):
       self = cls.__new__(cls)
-      self.ip = cls.ipintfromstring(ip_string)
+      self.ip = cls._ipintfromstring(ip_string)
       return self
       
    def __hash__(self):
@@ -114,9 +114,6 @@ class IPAddressBase(object):
    def __int__(self):
       return self.ip
    
-   def __long__(self):
-      return long(self.ip)
-   
    def __getstate__(self):
       return (self.ip,)
 
@@ -131,11 +128,14 @@ class IPAddressV4(IPAddressBase):
    ip_maximum = factor**subelements -1
    
    @staticmethod
-   def ipintfromstring(ip_string):
-      return struct.unpack('>L', inet_pton(AF_INET, ip_string))[0]
+   def _ipintfromstring(ip_string):
+      if not (isinstance(ip_string, str)):
+         # Having to do this is *so* moronic!
+         ip_string = ip_string.decode('ascii')
+      return struct.unpack(b'>L', inet_pton(AF_INET, ip_string))[0]
    
    def __str__(self):
-      return inet_ntop(AF_INET,struct.pack('>L', self.ip))
+      return inet_ntop(AF_INET,struct.pack(b'>L', self.ip))
 
 
 class IPAddressV6(IPAddressBase):
@@ -145,10 +145,13 @@ class IPAddressV6(IPAddressBase):
    ip_maximum = factor**subelements - 1
    
    @staticmethod
-   def ipintfromstring(ip_string):
-      (int1, int2) = struct.unpack('>QQ', inet_pton(AF_INET6, ip_string))
+   def _ipintfromstring(ip_string):
+      if not (isinstance(ip_string, str)):
+         # Having to do this is *so* moronic!
+         ip_string = ip_string.decode('ascii')
+      (int1, int2) = struct.unpack(b'>QQ', inet_pton(AF_INET6, ip_string))
       return (int1 << 64) + int2 
 
    def __str__(self):
-      return inet_ntop(AF_INET6, struct.pack('>QQ', self.ip >> 64, self.ip & 18446744073709551615)) # 18446744073709551615 == (1 << 64)-1
+      return inet_ntop(AF_INET6, struct.pack(b'>QQ', self.ip >> 64, self.ip & 18446744073709551615)) # 18446744073709551615 == (1 << 64)-1
 
