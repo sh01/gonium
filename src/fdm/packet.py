@@ -17,6 +17,7 @@
 
 # FDM classes for handling packet sequences (e.g. on DGRAM sockets).
 
+import collections
 from errno import EAGAIN
 from socket import error as sockerr, socket as socket_
 
@@ -30,11 +31,13 @@ class AsyncPacketSock:
    public attributes (rw):
      process_input(data, addrinfo): handler for read datagrams
    """
+   output_encoding = 'ascii'
    def __init__(self, ed, filelike, *, read_r:bool=True, bufsize=65536):
       self._ed = ed
-      self.fl = fileike
-      self._fw = ed.fd_wrap(fl.fileno())
-      self._fw.readability_process = self._process_input0
+      self.fl = filelike
+      self._fw = ed.fd_wrap(self.fl.fileno())
+      self._fw.process_readability = self._process_input0
+      self._fw.process_close = self._process_close
       if (read_r):
          self._fw.read_r()
       self.bufsize = bufsize
@@ -44,8 +47,25 @@ class AsyncPacketSock:
          try:
             (data, addrinfo) = self.fl.recvfrom(self.bufsize)
          except sockerr as exc:
-            if (sockerr.errno != EAGAIN):
+            if (exc.errno != EAGAIN):
                raise
             break
          self.process_input(data, addrinfo)
+
+   def send_data(self, buffers:collections.Sequence, target):
+      """Like send_bytes(), but encodes any strings with self.output_encoding."""
+      enc = self.output_encoding
+      def encode(buf):
+         if (hasattr(buf, 'encode')):
+            buf = buf.encode(enc)
+         return buf
+      self.send_bytes(map(encode,buffers), *args, **kwargs)
+
+   def send_bytes(self, buffers:collections.Sequence, target):
+      """Send specified data to specified target"""
+      for buf in buffers:
+         self.fl.sendto(buf, target)
+
+   def _process_close(self):
+      self.process_close()
 
