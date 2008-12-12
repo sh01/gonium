@@ -1,5 +1,5 @@
 #!/usr/bin/env python2.3
-#Copyright 2004 Sebastian Hagen
+#Copyright 2004,2008 Sebastian Hagen
 # This file is part of gonium.
 #
 # gonium is free software; you can redistribute it and/or modify
