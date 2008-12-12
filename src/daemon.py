@@ -21,11 +21,21 @@ import logging
 import warnings
 from warnings import showwarning as showwarning_orig
 
-def daemon_init(stdout_filename='log/stdout', stderr_filename='log/stderr', setsid=True):
+_logger_warnings = logging.getLogger('warnings')
+
+def daemon_fork(stdout_filename=b'/dev/null', stderr_filename=b'/dev/null',
+      setsid=True, warnings_redirect=True, pidfile=None):
+   
+   if (pidfile):
+      pidfile.unlock()
+   
    fork_result = os.fork()
    if (fork_result != 0):
-      print 'Started as %s.' % (fork_result,)
+      print('Started as {0}.'.format(fork_result,))
       sys.exit(0)
+   
+   if (pidfile):
+      pidfile.lock()
    
    if (setsid):
       os.setsid()
@@ -37,22 +47,27 @@ def daemon_init(stdout_filename='log/stdout', stderr_filename='log/stderr', sets
    sys.stdout.close()
    os.close(sys.stderr.fileno())
    sys.stderr.close()
+   
+   if (warnings_redirect):
+      warnings_redirect_logging()
+   
    if (stdout_filename):
-      sys.stdout = file(stdout_filename, 'a+', 1)
+      sys.stdout = open(stdout_filename, 'a+', 1)
    if (stderr_filename):
-      sys.stderr = file(stderr_filename, 'a+', 0)
+      sys.stderr = open(stderr_filename, 'a+', 0)
    
    sys.__stderr__ = sys.__stdout__ = sys.__stdin__ = sys.stdin = None
 
 
-logger_warnings = logging.getLogger('warnings')
-
-def showwarning_logging(message, category, filename, lineno, file=None):
+def _showwarning_logging(message, category, filename, lineno, file=None, *args,
+      **kwargs):
    if not (file is None):
-      showwarning_orig(message, category, filename, lineno, file)
+      showwarning_orig(message, category, filename, lineno, file, *args, **kwargs)
+      return
       
-   logger_warnings.warn(formatwarning(message, category, filename, lineno))
+   _logger_warnings.warn(formatwarning(message, category, filename, lineno,
+      *args, **kwargs))
 
-def warnings_redirect_logging():
-   warnings.showwarning = showwarning_logging
+def _warnings_redirect_logging():
+   warnings.showwarning = _showwarning_logging
 
