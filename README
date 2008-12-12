@@ -1,3 +1,4 @@
 This is the python3.0 version of gonium.
-It's official status is 'broken'. Don't report any bugs about this, it isn't
-expected to work yet.
+It's official status is 'experimental'. Feel free to use, but note that many
+parts of it haven't gotten much testing. If you run into any bugs, please do
+report them.
