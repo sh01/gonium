@@ -28,33 +28,39 @@
 # Then again, using threads just to work around unnecessary library limitations
 # is slightly offensive to the author.
 
+import http.client
+import logging
 import os
 import sys
 import socket
-import logging
-import http.client
 import urllib.request
+from collections import deque, Sequence
 from io import BytesIO
-from http.client import HTTPConnection as HTTPConnection_orig
+from http.client import HTTPConnection
 from threading import Lock
+from urllib.request import build_opener as _build_opener, HTTPHandler
 
 from ..fdm.stream import AsyncDataStream
 
-class HTTPHacksError(Exception):
+class AsyncHTTPError(Exception):
    pass
 
-class HTTPHacksLockingError(HTTPHacksError):
+class AsyncHTTPLockingError(AsyncHTTPError):
    pass
 
-class HTTPHacksNoResponseSetError(HTTPHacksError):
+class AsyncHTTPNoResponseSetError(AsyncHTTPError):
    """An exception that also happens to deliver request data."""
    def __init__(self, host, port, req_string, *args, **kwargs):
       self.req_string = req_string
       self.host = host
       self.port = port
-      HTTPHacksError.__init__(self, *args, **kwargs)
+      AsyncHTTPError.__init__(self, *args, **kwargs)
 
-class HTTPHacksStateError(HTTPHacksError):
+   def build_hcd(self):
+      """Return HTTPConnectionData instance initialized from this exception"""
+      return HTTPConnectionData(self.host, self.port, self.req_string)
+
+class AsyncHTTPStateError(AsyncHTTPError):
    pass
 
 class HttpHacksFakeSock:
@@ -64,7 +70,7 @@ class HttpHacksFakeSock:
       """Return stored file-like object. Parameters are ignored."""
       return self.file
 
-class HTTPHacksMaximumQueryDepthExceededError(HTTPHacksError):
+class AsyncHTTPMaximumQueryDepthExceededError(AsyncHTTPError):
    pass
 
 
@@ -77,16 +83,16 @@ class HTTPConnectionData:
    def __repr__(self):
       return '%r(%r, %r, %r)' % (self.__class__.__name__, self.host, self.port, self.req_string)
 
-class HTTPConnection(HTTPConnection_orig):
+
+class AsyncHTTPConnection(HTTPConnection):
    """Return input using an exception, or alternatively provide output to caller."""
    _hack_logger = logging.getLogger('HTTPConnection')
    _hack_log = _hack_logger.log
-   responses = ()
    lock = Lock()
    def __init__(self, host, port=None, *args, **kwargs):
       if (port is None):
          port = 80
-      HTTPConnection_orig.__init__(self, host, port *args, **kwargs)
+      HTTPConnection.__init__(self, host, port, *args, **kwargs)
       self.req_string = b''
       self.__host = host
       self.__port = port
@@ -95,13 +101,13 @@ class HTTPConnection(HTTPConnection_orig):
       self.req_string += string
       
    def getresponse(self):
-      if not (self.responses):
+      if not (self._responses):
          # the original caller responsible for activating the hack should catch
          # this, and extract the saved req_string.
-         raise HTTPHacksNoResponseSetError(self.__host, self.__port,
+         raise AsyncHTTPNoResponseSetError(self.__host, self.__port,
                self.req_string, 'Out of responses.')
       
-      response_str = self.responses.pop(0)
+      response_str = self._responses.popleft()
       self._hack_log(10, 'Returning response {0}.'.format(response_str,))
       rv = self.response_class(HttpHacksFakeSock(BytesIO(response_str)))
       rv.begin()
@@ -114,10 +120,10 @@ class HTTPConnection(HTTPConnection_orig):
       
       This acquires a class-level lock. Be sure to call hack_disable() once you are done."""
       cls._hack_log(12, 'Acquiring lock for http_hack and activating.')
-      cls.responses = list(responses)
+      cls._responses = deque(responses)
       lock_rv = cls.lock.acquire(lock_wait)
       if not (lock_wait or lock_rv):
-         raise HTTPHacksLockingError('Non-blocking httphacks lock acquiration failed.')
+         raise AsyncHTTPLockingError('Non-blocking httphacks lock acquiration failed.')
       http.client.HTTPConnection = cls
 
    @classmethod
@@ -125,7 +131,7 @@ class HTTPConnection(HTTPConnection_orig):
       """Disable the hack and release class-level lock"""
       cls._hack_log(12, 'Releasing lock for http_hack and deactivating.')
       cls.lock.release()
-      http.client.HTTPConnection = HTTPConnection_orig
+      http.client.HTTPConnection = HTTPConnection
       
    @classmethod
    def call_wrap(cls, callee, call_args, call_kwargs, responses=(), lock_wait=False):
@@ -133,20 +139,62 @@ class HTTPConnection(HTTPConnection_orig):
       
       This calls callee(*call_args, **call_kwargs) while the hack is active.
       This returns a (<caught_exc>, val) pair.
-      Val is the req_string if an HTTPHacksNoResponseSetError is caught, and
+      Val is the req_string if an AsyncHTTPNoResponseSetError is caught, and
       callee's return value if callee doesn't throw an exception."""
 
       cls.hack_enable(responses=responses, lock_wait=lock_wait)
       try:
          try:
             rv = (False, callee(*call_args, **call_kwargs))
-         except HTTPHacksNoResponseSetError as exc:
-            rv = (True, HTTPConnectionData(exc.host, exc.port, exc.req_string))
+         except AsyncHTTPNoResponseSetError as exc:
+            rv = (True, exc.build_hcd())
       finally:
          cls.hack_disable()
 
       return rv
+
+
+class AsyncHTTPHandler(urllib.request.HTTPHandler):
+   def http_open(self, req):
+      # Outer callable: Have passed ahc constructor pass through our _responses
+      # argument
+      def build_ahc(*args, **kwargs):
+         rv = AsyncHTTPConnection(self._responses, *args, **kwargs)
+         rv._responses = self._responses
+         return rv
+      
+      return self.do_open(build_ahc, req)
+
+
+def build_async_opener():
+   """Return http.client OpenerDirector using AsyncHTTPConnection.
    
+   Note that returned OD objects are not thread-safe to use. If in doubt,
+   create one of them for each using thread."""
+   rv = _build_opener(AsyncHTTPHandler)
+   
+   for handler in rv.handlers:
+      if (isinstance(handler, AsyncHTTPHandler)):
+         ahh = handler
+         break
+   else:
+      raise AsyncHTTPError('Opener Director setup failed. This most likely indicates a bug in gonium.')
+   open_prev = rv.open
+   
+   def open_new(*args, responses:Sequence, **kwargs) -> (bool, "response or data"):
+      """Works like a normal OpenerDirector, except for taking a mandatory
+         keyword argument 'responses'"""
+      ahh._responses = deque(responses)
+      try:
+         return (False, open_prev(*args, **kwargs))
+      except AsyncHTTPNoResponseSetError as exc:
+         return (True, exc.build_hcd())
+      finally:
+         del(ahh._responses)
+      
+   rv.open = open_new
+   return rv
+
 
 class HTTPFetcher:
    """Fetch a file over http using gonium event-loop"""
@@ -164,7 +212,7 @@ class HTTPFetcher:
       self.req_connection = None
       self.req_timer = None
       self.targets = []
-      self.responses = []
+      self.responses = deque()
       self.timeout = timeout
       self.error_abort = False
       self.query_depth_limit = query_depth_limit
@@ -221,13 +269,13 @@ class HTTPFetcher:
    def query_init(self):
       """Process received data, and optionally start new query"""
       if (self.req_connection):
-         return HTTPHacksStateError('Already retrieving data')
+         return AsyncHTTPStateError('Already retrieving data')
       req_headers = {}
       if (self.ua):
          req_headers['User-Agent'] = self.ua
       ul_req = urllib.request.Request(self.url, None, req_headers)
       try:
-         (got_exc, data) = HTTPConnection.call_wrap(urllib.request.urlopen, (ul_req,), {}, tuple(self.responses))
+         (got_exc, data) = AsyncHTTPConnection.call_wrap(urllib.request.urlopen, (ul_req,), {}, tuple(self.responses))
       except (Exception, http.client.HTTPException) as exc:
          self.log(40, 'urllib.request.urlopen call failed:', exc_info=True)
          self.abort_query_process(exc)
@@ -275,7 +323,7 @@ class SimpleHTTPFetcher(HTTPFetcher):
 
    def abort_depth_process(self):
       """Process http fetch abortion because of exceeded query depth"""
-      exc = HTTPHacksMaximumQueryDepthExceededError('{0!a} exceeded maximum'
+      exc = AsyncHTTPMaximumQueryDepthExceededError('{0!a} exceeded maximum'
          'query depth after connecting to ({1!a},{2!a}) and using reqstring'
          '{3!a}.'.format(self, self.target_host, self.target_port, self.req_string))
       self.parent.http_failure_handle(self, exc)
@@ -306,35 +354,47 @@ def _selftest():
    
    log(20, 'Target host is {0!a}.'.format(host,))
    
+   def test1(got_exc, hcd):
+      if not (got_exc):
+         raise Exception('First hacks.aynchttpc call failed. Results: {0!a}'.format((got_exc, hcd),))
+      req_string = hcd.req_string
+      log(20, 'Req string is {0!a}.'.format(req_string))
+   
+      s = socket.socket()
+      log(20, 'Connecting to {0!a}.'.format(host,))
+      s.connect((netloc, 80))
+      s.setblocking(1)
+      log(20, 'Done. Sending query.')
+      s.sendall(req_string)
+      log(20, 'Done. Reading response.')
+      str_response = s.recv(100000000)
+      s.close()
+      log(20, 'Done. Response is: {0!a}. Preparing to pass response back through urllib.request for parsing.'.format(str_response,))
+      return str_response
+   
+   def test2(got_exc, urlo):
+      if (got_exc):
+         raise Exception('Second hacks.aynchttpc call failed. urllib attempted additional query: {0!a}'.format(urlo,))
+      log(20, 'Done. Got urlo instance {0!a}.'.format(urlo,))
+      str_response_content = urlo.read()
+      log(20, 'Extracted content is {0!a}.'.format(str_response_content,))
+   
+   log(20, "==== Testing call_wrap interface ====")
    log(20, 'Getting req string.')
-   (got_exc, hcd) = HTTPConnection.call_wrap(urllib.request.urlopen, (url,), {}, ())
-   if not (got_exc):
-      raise Exception('First hacks.aynchttpc call failed. Results: {0!a}'.format((got_exc, hcd),))
    
-   req_string = hcd.req_string
-   log(20, 'Req string is {0!a}.'.format(req_string))
+   (got_exc, hcd) = AsyncHTTPConnection.call_wrap(urllib.request.urlopen, (url,), {}, ())
+   response = test1(got_exc, hcd)
+   (got_exc, urlo) = AsyncHTTPConnection.call_wrap(urllib.request.urlopen, (url,), {}, (response,))
+   test2(got_exc, urlo)
    
-   s = socket.socket()
-   log(20, 'Connecting to {0!a}.'.format(host,))
-   s.connect((netloc, 80))
-   s.setblocking(1)
-   log(20, 'Done. Sending query.')
-   s.sendall(req_string)
-   log(20, 'Done. Reading response.')
-   str_response = s.recv(100000000)
-   s.close()
-   log(20, 'Done. Response is: {0!a}. Preparing to pass response back through urllib.request for parsing.'.format(str_response,))
+   log(20, "==== Testing OD interface ====")
+   od = build_async_opener()
+   (got_exc, hcd) = od.open(url, responses=())
+   response = test1(got_exc, hcd)
+   (got_exc, hcd) = od.open(url, responses=(response,))
+   test2(got_exc, hcd)
    
-   (got_exc, urlo) = HTTPConnection.call_wrap(urllib.request.urlopen, (url,), {}, (str_response,))
-   if (got_exc):
-      raise Exception('Second hacks.aynchttpc call failed. URL attempted additional query: {0!a}'.format(urlo,))
-   log(20, 'Done. Got urlo instance {0!a}.'.format(urlo,))
-   
-   str_response_content = urlo.read()
-   
-   log(20, 'Extracted content is {0!a}.'.format(str_response_content,))
-   
-   log(20, 'All done.')
+   log(20, '==== All done. ====')
 
 if (__name__ == '__main__'):
    _selftest()
