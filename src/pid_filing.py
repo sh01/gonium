@@ -19,33 +19,41 @@ import sys
 import os
 import fcntl
 
-pid_file = None
-
-def file_pid(pid_filename=os.path.basename(sys.argv[0]) + '.pid'):
-   global pid_file
-   if (os.path.exists(pid_filename)):
-      pid_file = file(pid_filename, 'r+')
-   else:
-      pid_file = file(pid_filename, 'w')
-
-   try:
-      fcntl.lockf(pid_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-   except IOError:
-      pid_file.close()
-      print 'Our pid-file %s is already locked, aborting.' % (pid_filename,)
-      sys.exit(0)
-   else:
-      pid_file.write('%s' % (os.getpid(),))
-      pid_file.truncate()
-      pid_file.flush()
-      return pid_file
-
-def release_pid_file(pidfile=None):
-   global pid_file
-   if not (pidfile):
-      pidfile = pid_file
+class PidFile:
+   def __init__(self, filename:bytes=None):
+      """Open pid-file."""
+      if (filename is None):
+         argv0 = sys.argv[0]
+         if (isinstance(bn, str)):
+            # Get rid of silly unicode names
+            argv0 = argv0.encode()
+         filename = os.path.basename(argv0) + b'.pid'
+      if (os.path.exists(filename)):
+         mode = 'r+b'
+      else:
+         mode = 'wb'
+      
+      # The feature allowing for calling open() on bytes filenames was added
+      # somewhere between CPython 3.0-rc1 and -rc3. This version is written
+      # for 3.0 final, so using it should be fine.
+      self.filename = filename
+      self.file = open(filename, mode)
    
-   fcntl.lockf(pidfile.fileno(), fcntl.LOCK_UN)
-   pidfile.close()
-   pidfile = None
-   
+   def lock(self, else_die:bool=False):
+      """Acquire lock on pid file; if successful, write our pid to it. If 
+         the optional argument is specified and True, any IOErrors will 
+         be caught and turned into SystemExits."""
+      try:
+         fcntl.lockf(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+      except IOError:
+         if (else_die):
+            print('Our pid-file {0} is already locked, aborting.'.format(self.filename,))
+            sys.exit(0)
+         raise
+      self.file.seek(0)
+      self.file.write(ascii(os.getpid()).encode('ascii'))
+      self.file.truncate()
+   def unlock(self):
+      """Release lock on pid file."""
+      fcntl.lockf(self.file.fileno(), fcntl.LOCK_UN)
+
