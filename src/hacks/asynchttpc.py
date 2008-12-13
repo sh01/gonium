@@ -303,7 +303,7 @@ class HTTPFetcher:
       self.req_connection.process_input = self.sub_input_handler
       self.req_connection.process_close = self.sub_close_handler
       self.targets.append(target)
-      self.req_timer = Timer(self.ed, self.timeout, self.sub_timeout_handler)
+      self.req_timer = self.ed.set_timer(self.timeout, self.sub_timeout_handler)
 
    def __repr__(self):
       return '{0!s}{0!a}'.format(self.__class__.__name__, tuple([getattr(self, name) for name in self.init_args]))

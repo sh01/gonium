@@ -86,7 +86,7 @@ def _selftest():
    import time
    from signal import SIGUSR1
    
-   from ..fdm import ED_get, Timer
+   from ..fdm import ED_get
    from .._debugging import streamlogger_setup; streamlogger_setup()
    
    print('==== Setup ====')
@@ -120,7 +120,7 @@ def _selftest():
    def ofhandler():
       print('...overflowed.')
    sc.handle_overflow = ofhandler
-   Timer(ed, 10, ed.shutdown)
+   ed.set_timer(10, ed.shutdown)
    
    print('==== Catching signals. ====')
    ed.event_loop()

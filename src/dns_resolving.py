@@ -23,7 +23,7 @@ import random
 
 from . import ip_address
 from .ip_address import IPAddressV4, IPAddressV6
-from .fdm import AsyncPacketSock, Timer
+from .fdm import AsyncPacketSock
 
 CLASS_IN = 1
 CLASS_CS = 2
@@ -580,7 +580,7 @@ class DNSQuery:
       self.la = lookup_manager
       self.la.query_add(self)
       if not (timeout is None):
-         self.tt = Timer(self.la.event_dispatcher, timeout, self.timeout_process, parent=self)
+         self.tt = self.la.event_dispatcher.set_timer(timeout, self.timeout_process, parent=self)
    
    def timeout_process(self):
       """Process a timeout on this query"""

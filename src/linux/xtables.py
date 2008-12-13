@@ -43,7 +43,6 @@ SOL_IPV6 = 41
 
 from ..ip_address import IPAddressV4, IPAddressV6
 from ..event_multiplexing import EventMultiplexer
-from ..fdm import Timer
 
 NF_IP_NUMHOOKS = 5
 NF_IP6_NUMHOOKS = 5
@@ -598,7 +597,7 @@ class XTablesPoller:
       self.ed = ed
       self.xt = xt
       self.tables = tables
-      self.timer = Timer(ed, interval, self.xt_poll, persist=True, align=True, parent=self)
+      self.timer = ed.set_timer(ed, interval, self.xt_poll, persist=True, align=True, parent=self)
    
    def xt_poll(self):
       for table in self.tables:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of gonium.
 #
 # gonium is free software; you can redistribute it and/or modify
@@ -15,6 +15,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+# For lack of easy access to Python3.0->QT4 bindings, this code hasn't been
+# tested  since being ported to python3.0 gonium. It is likely to be broken.
+
 import os
 import time
 import math
@@ -22,7 +25,7 @@ import types
 
 from PyQt4.QtCore import QObject, QSocketNotifier, QTimer, SIGNAL, QThread
 
-from gonium.fd_management import EventDispatcherBase
+from ._base import EventDispatcherBaseTT
 
 # Stupidly, these appear to be staticmethods. Might as well make them global
 # then.
@@ -30,7 +33,7 @@ connect = QObject.connect
 disconnect = QObject.disconnect
 
 
-class EventDispatcherQTFD:
+class _EventDispatcherQTFD:
    """Internal fdw wrapper used by EventDispatcherQT"""
    def __init__(self, fdw):
       self.fdw = fdw
@@ -42,41 +45,32 @@ class EventDispatcherQTFD:
       self.qsn_oob.setEnabled(False)
       connect(self.qsn_read, SIGNAL('activated(int)'), self.fd_read)
       connect(self.qsn_write, SIGNAL('activated(int)'), self.fd_write)
-      connect(self.qsn_oob, SIGNAL('activated(int)'), self.fd_oob)
    
-   def fd_read(self, fd):
-      self.fdw.fd_read()
-   def fd_write(self, fd):
-      self.fdw.fd_write()
-   def fd_oob(self, fd):
-      self.fdw.fd_oob()
+   def process_readability(self, fd):
+      self.fdw.process_readability()
    
-   def register_read(self):
+   def process_writability(self, fd):
+      self.fdw.process_writability()
+   
+   def read_r(self):
       self.qsn_read.setEnabled(True)
 
-   def register_write(self):
+   def write_r(self):
       self.qsn_write.setEnabled(True)
 
-   def register_oob(self):
-      self.qsn_oob.setEnabled(True)
-
-   def unregister_read(self):
+   def read_u(self):
       self.qsn_read.setEnabled(False)
-      return not (False is self.qsn_read.isEnabled() is self.qsn_write.isEnabled() is self.qsn_oob.isEnabled())
 
-   def unregister_write(self):
-      return not (False is self.qsn_read.isEnabled() is self.qsn_write.isEnabled() is self.qsn_oob.isEnabled())
+   def write_u(self):
+      self.qsn_write.setEnabled(False)
 
-   def unregister_oob(self):
-      return not (False is self.qsn_read.isEnabled() is self.qsn_write.isEnabled() is self.qsn_oob.isEnabled())
-
-   def unregister_all(self):
+   def _unregister_all(self):
       for qsn in (self.qsn_read, self.qsn_write, self.qsn_oob):
          if (qsn.isEnabled()):
             qsn.setEnabled(False)
    
-   def clean_up(self):
-      self.unregister_all()
+   def close(self):
+      self._unregister_all()
       disconnect(self.qsn_read, SIGNAL('activated(int)'), self.fd_read)
       disconnect(self.qsn_write, SIGNAL('activated(int)'), self.fd_write)
       disconnect(self.qsn_oob, SIGNAL('activated(int)'), self.fd_oob)
@@ -88,30 +82,30 @@ class EventDispatcherQTFD:
       self.qsn_oob = None
 
 
-class EventDispatcherQT(EventDispatcherBase):
+class EventDispatcherQT(EventDispatcherBaseTT):
    """Event dispatcher class based on QT event loop"""
    def __init__(self, *args, **kwargs):
       self.fds = {}
       self.tp_qttimer = None
       
-      EventDispatcherBase.__init__(self, *args, **kwargs)
+      EventDispatcherBaseTT.__init__(self, *args, **kwargs)
    
    def shutdown(self):
       """Shut down all connections managed by this event dispatcher and clear the timer list"""
       raise NotImplementedError()
 
-   def fd_register(self, fdw, eventtype):
+   def _fd_register(self, fdw, eventtype):
       """Start monitoring specified eventtype on fd"""
       fd = int(fdw)
       if (fd in self.fds):
          edqf = self.fds[fd]
       else:
-         edqf = EventDispatcherQTFD(fdw)
+         edqf = _EventDispatcherQTFD(fdw)
          self.fds[fd] = edqf
       
       getattr(edqf, ('register_' + eventtype))()
 
-   def fd_unregister(self, fdw, eventtype):
+   def _fd_unregister(self, fdw, eventtype):
       """Stop monitoring specified eventtype on fd"""
       fd = int(fdw)
       edqf = self.fds[fd]
@@ -120,61 +114,75 @@ class EventDispatcherQT(EventDispatcherBase):
          edqf.clean_up()
          del(self.fds[fd])
 
-   def fd_register_read(self, fdw):
+   def _fdcb_read_r(self, fdw):
       """Add fd to read set"""
       self.fd_register(fdw, 'read')
       
-   def fd_register_write(self, fdw):
+   def _fdcb_write_r(self, fdw):
       """Add fd to write set"""
       self.fd_register(fdw, 'write')
    
-   def fd_register_oob(self, fdw):
-      """Add fd to error set"""
-      self.fd_register(fdw, 'oob')
-   
-   def fd_unregister_read(self, fdw):
+   def _fdcb_read_u(self, fdw):
       """Remove fd from read set"""
       self.fd_unregister(fdw, 'read')
       
-   def fd_unregister_write(self, fdw):
+   def _fdcb_write_u(self, fdw):
       """Remove fd from write set"""
       self.fd_unregister(fdw, 'write')
-   
-   def fd_unregister_oob(self, fdw):
-      """Remove fd from error set"""
-      self.fd_unregister(fdw, 'oob')
 
-   def fd_unregister_all(self, fdw):
+   def _fd_unregister_all(self, fdw):
       """Remove fd from all event sets"""
-      self.fds.pop(int(fdw)).clean_up()
+      self.fds.pop(int(fdw)).close()
 
-   def timer_processing_prepare(self):
+   def _timer_processing_prepare(self):
       """Set QTimer to call timers_process() in time for next time expiration"""
-      if (self.timers_active):
-         timer = self.tp_qttimer = QTimer()
-         connect(timer, SIGNAL('timeout()'), self.timers_process)
-         self.tp_qttimer.start(max(math.ceil((self.timers_active[0].expire_ts - time.time())*1000),0))
-      else:
-         self.tp_qttimer = None
+      with self.timer_lock:
+         if (self._timers_active):
+            timer = self.tp_qttimer = QTimer()
+            connect(timer, SIGNAL('timeout()'), self._timers_process)
+            self.tp_qttimer.start(max(math.ceil((self._timers[0].expire_ts - time.time())*1000),0))
+         else:
+            self.tp_qttimer = None
 
-   def timer_register(self, *args, **kwargs):
+   def _register_timer(self, *args, **kwargs):
       """Register a new timer."""
-      EventDispatcherBase.timer_register(self, *args, **kwargs)
+      EventDispatcherBaseTT._register_timer(self, *args, **kwargs)
       if not (self.tp_qttimer is False):
          if not (self.tp_qttimer is None):
             self.tp_qttimer.stop()
-         self.timer_processing_prepare()
+         self._timer_processing_prepare()
 
-   def timers_process(self, *args, **kwargs):
+   def _timers_process(self, *args, **kwargs):
       """Process expired timers."""
       self.tp_qttimer = False
-      EventDispatcherBase.timers_process(self, *args, **kwargs)
-      self.timer_processing_prepare()
+      timers = self._timers
+      # Timer processing
+      with self._timer_lock:
+         if (timers == []):
+            return
+         timers_exp = deque()
+         now = ttime()
+         try:
+            while (timers[0]._expire_ts <= now):
+               timers_exp.append(heappop(timers))
+         except IndexError:
+            pass
+      
+      while (timers_exp):
+         timer = timers_exp.popleft()
+         try:
+            timer.fire()
+         except Exception as exc:
+            _log(40, 'Caught exception in timer {0}:'.format(timer), exc_info=True)
+         if (timer):
+            heappush(timers,timer)
+      
+      self._timer_processing_prepare()
 
    def event_loop(self, qtapp):
       """Run the event loop of this dispatcher"""
       if (self.tp_qttimer is None):
-         self.timer_processing_prepare()
+         self._timer_processing_prepare()
       
       qtapp.exec_()
 

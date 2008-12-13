@@ -32,6 +32,5 @@
 from . import ed
 from . import stream
 from .ed import ED_get
-from .ed._base import Timer
 from .stream import *
 from .packet import *

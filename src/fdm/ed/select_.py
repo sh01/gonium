@@ -136,21 +136,16 @@ class EventDispatcherPollBase(EventDispatcherBaseTT):
                   fdw.close()
          
          # Timer processing
-         if (timers == []):
-            continue
-         timer_lock.acquire()
-         # Paranoia: List may have been modified before we got the lock
-         if (timers == []):
-            continue
-         timers_exp = deque()
-         now = ttime()
-         try:
-            while (timers[0]._expire_ts <= now):
-               timers_exp.append(heappop(timers))
-         except IndexError:
-            pass
-         finally:
-            timer_lock.release()
+         with timer_lock:
+            if (timers == []):
+               continue
+            timers_exp = deque()
+            now = ttime()
+            try:
+               while (timers[0]._expire_ts <= now):
+                  timers_exp.append(heappop(timers))
+            except IndexError:
+               pass
          
          while (timers_exp):
             timer = timers_exp.popleft()
