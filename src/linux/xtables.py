@@ -597,7 +597,7 @@ class XTablesPoller:
       self.ed = ed
       self.xt = xt
       self.tables = tables
-      self.timer = ed.set_timer(ed, interval, self.xt_poll, persist=True, align=True, parent=self)
+      self.timer = ed.set_timer(interval, self.xt_poll, persist=True, align=True, parent=self)
    
    def xt_poll(self):
       for table in self.tables:

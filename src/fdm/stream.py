@@ -339,7 +339,7 @@ class AsyncSockServer:
 
 def _selftest(out=None):
    import os
-   from . import ED_get, Timer
+   from . import ED_get
    from subprocess import PIPE
    from .._debugging import streamlogger_setup; streamlogger_setup()
    if (out is None):
@@ -359,7 +359,7 @@ def _selftest(out=None):
    def close_handler():
       d = 2
       ads_out.send_data(('Pipe closed, will shutdown in {0} seconds\n'.format(d),))
-      Timer(ed, d, ed.shutdown)
+      ed.set_timer(d, ed.shutdown)
       
    ed = ED_get()()
    out.write('Using ED {0}\n'.format(ed))
