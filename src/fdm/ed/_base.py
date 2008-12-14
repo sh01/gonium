@@ -26,6 +26,8 @@ from heapq import heappush, heapify
 from time import time as time_
 from types import MethodType
 
+from ...event_multiplexing import EventMultiplexer
+
 _logger = logging.getLogger('gonium.src.fdm')
 _log = _logger.log
 
@@ -99,6 +101,7 @@ class EventDispatcherBase:
    def __init__(self, fdc_initial:int=0):
       fdc_initial = fdc_initial or self.FDC_INITIAL
       self._fdwl = [None]*fdc_initial
+      self.em_shutdown = EventMultiplexer(self)
       self._shutdown_pending = False
       self._timers = []
    

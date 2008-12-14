@@ -139,13 +139,16 @@ class AsyncDataStream:
    def send_bytes(self, buffers:collections.Sequence, flush=True):
       """Append set of buffers to pending output and attempt to push.
          Buffers elements must be bytes, bytearray, memoryview or similar."""
+      assert not (isinstance(buffers, (bytes, bytearray)))
       had_pending = bool(self._outbuf)
       self._outbuf.extend(buffers)
       if (flush):
          self._output_write(had_pending, _known_writable=False)
 
    def discard_inbuf_data(self, bytes:int=None):
-      """Discard <bytes> of in-buffered data."""
+      """Discard <bytes> of in-buffered data.
+      
+      If bytes is unspecified or None, discard all of it."""
       if ((bytes is None) or (bytes == self._index_in)):
          self._index_in = 0
          return
@@ -257,6 +260,7 @@ class AsyncDataStream:
    def _process_input1(self):
       """Override in subclass to insert more handlers"""
       self.process_input(self, memoryview(self._inbuf)[:self._index_in])
+
 
 class AsyncLineStream(AsyncDataStream):
    """Class for asynchronously accessing line-based bytestreams"""

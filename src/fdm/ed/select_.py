@@ -40,7 +40,6 @@ class EventDispatcherPollBase(EventDispatcherBaseTT):
       EventDispatcherBaseTT.__init__(self, **kwargs)
       self._fdml = [None]*len(self._fdwl)
       self._poll = self.CLS_POLL()
-      self.em_shutdown = EventMultiplexer(self)
    
    def _fdl_sizeinc(self, *args, **kwargs):
       """Increase size of fdlists to at least the specified size"""
