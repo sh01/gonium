@@ -22,11 +22,13 @@ import logging
 import subprocess
 import sys
 from collections import deque
-from errno import EAGAIN, ECONNRESET, EPIPE, EINPROGRESS, EINTR
+from errno import EAGAIN, ECONNRESET, EPIPE, EINPROGRESS, EINTR, ENOBUFS, \
+   ECONNREFUSED, EHOSTUNREACH, ECONNRESET, ENOMEM, ECONNABORTED, ECONNRESET
 from select import poll, POLLOUT
 from socket import socket as socket_cls, AF_INET, SOCK_STREAM, SOL_SOCKET, \
    SO_ERROR, error as sockerr
 
+from ..ip_address import IPAddressBase
 from .exceptions import CloseFD
 
 _logger = logging.getLogger('gonium.fd_management')
@@ -46,7 +48,7 @@ class AsyncDataStream:
      send_bytes(lines, flush): As above, but without trying to encode strings
      discard_inbuf_data(n): Discard first n bytes of buffered input
      close(): Close wrapped filelike, if open
-     
+   
    Public attributes (intended for reading only):
       fl: wrapped filelike
    Public attributes (r/w):
@@ -54,9 +56,12 @@ class AsyncDataStream:
       output_encoding: argument to pass to .encode() for encoding str
          instances passed to send_data(). Data from byte sequences-objects
          is always written unmodified.
-      process_input(): process newly buffered input
+      process_input(data): process newly buffered input
       process_close(): process FD closing
    """
+   _SOCK_ERRNO_TRANS = {EINTR, ENOBUFS, ENOMEM, EAGAIN}
+   _SOCK_ERRNO_FATAL = {ECONNREFUSED, ECONNRESET, EHOSTUNREACH, ECONNABORTED, EPIPE}
+   
    def __init__(self, ed, filelike, *, inbufsize_start:int=1024,
                 inbufsize_max:int=0, size_need:int=0, read_r:bool=True):
       self.fl = filelike
@@ -99,8 +104,12 @@ class AsyncDataStream:
       """Nonblockingly open outgoing SOCK_STREAM/SOCK_SEQPACKET connection."""
       sock = socket_cls(family, type_, proto)
       sock.setblocking(0)
+      s_address = address
+      if (isinstance(address[0], IPAddressBase)):
+         s_address = (str(address[0]), address[1])
+      
       try:
-         sock.connect(address)
+         sock.connect(s_address)
       except sockerr as exc:
          if (exc.errno == EINPROGRESS):
             pass
@@ -210,10 +219,13 @@ class AsyncDataStream:
          try:
             rv = self._out(buf)
          except sockerr as exc:
-            if ((exc.errno == EINTR) or (exc.errno == ENOBUFS)):
+            if (exc.errno in self._SOCK_ERRNO_TRANS):
+               self._outbuf.append(buf)
                break
-            elif ((exc.errno == ECONNRESET) or (exc.errno == EPIPE)):
-               raise CloseFD()
+            if (exc.errno in self._SOCK_ERRNO_FATAL):
+               self.close()
+               return
+            raise
          
          if (firstbuf):
             firstbuf = False
@@ -242,12 +254,13 @@ class AsyncDataStream:
       except IOError as exc:
          if (exc.errno == EINTR):
             return
-         if (exc.errno == ECONNREFUSED):
+         if (exc.errno in self._SOCK_ERRNO_FATAL):
             raise CloseFD()
          raise
       if (br == 0):
          raise CloseFD()
       self._index_in += br
+      return br
    
    def _process_input0(self):
       """Input processing stage 0: read and buffer bytes"""
@@ -259,7 +272,7 @@ class AsyncDataStream:
 
    def _process_input1(self):
       """Override in subclass to insert more handlers"""
-      self.process_input(self, memoryview(self._inbuf)[:self._index_in])
+      self.process_input(memoryview(self._inbuf)[:self._index_in])
 
 
 class AsyncLineStream(AsyncDataStream):
@@ -294,7 +307,7 @@ class AsyncLineStream(AsyncDataStream):
          self.discard_inbuf_data(line_start)
    
    def _process_input2(self, *args, **kwargs):
-      self.process_input(self, *args, **kwargs)
+      self.process_input(*args, **kwargs)
 
 
 class AsyncPopen(subprocess.Popen):
@@ -353,7 +366,7 @@ def _selftest(out=None):
       def __init__(self,l=8):
          self.i = 0
          self.l = l
-      def __call__(self, stream, data, *args,**kwargs):
+      def __call__(self, data, *args,**kwargs):
          self.i += 1
          
          ads_out.send_data(('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs),))

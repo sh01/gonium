@@ -17,6 +17,7 @@
 
 import logging
 import fcntl
+import math
 import numbers
 import os
 import threading

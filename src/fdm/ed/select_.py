@@ -43,7 +43,7 @@ class EventDispatcherPollBase(EventDispatcherBaseTT):
    
    def _fdl_sizeinc(self, *args, **kwargs):
       """Increase size of fdlists to at least the specified size"""
-      EventDispatcherBase._fdl_sizeinc(self,*args, **kwargs)
+      EventDispatcherBaseTT._fdl_sizeinc(self,*args, **kwargs)
       self._fdml += [None]*(len(self._fdwl) - len(self._fdml))
    
    def fd_wrap(self, fd:int, *args, **kwargs):

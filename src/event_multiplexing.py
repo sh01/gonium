@@ -111,7 +111,7 @@ class EventAggregator(EventMultiplexer):
       
    def multiplexer_register(self, m):
       """Register specified multiplexer """
-      self.listeners_in[m] = m.new_listener()
+      self.listeners_in[m] = m.new_listener(self)
       
    def multiplexer_unregister(self, m):
       """Unregister specified multiplexer"""

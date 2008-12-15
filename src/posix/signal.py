@@ -20,7 +20,7 @@ import logging
 import os
 
 from . import _signal
-from ._signal import SigSet
+from ._signal import SigSet, SA_NOCLDSTOP, SA_ONSTACK, SA_RESETHAND, SA_RESTART, SA_NOCLDWAIT, SA_NODEFER
 
 _logger = logging.getLogger('gonium.posix.signal')
 _log = _logger.log
