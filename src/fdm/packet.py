@@ -35,7 +35,7 @@ class AsyncPacketSock:
    def __init__(self, ed, filelike, *, read_r:bool=True, bufsize=65536):
       self._ed = ed
       self.fl = filelike
-      self._fw = ed.fd_wrap(self.fl.fileno())
+      self._fw = ed.fd_wrap(self.fl.fileno(), fl=filelike)
       self._fw.process_readability = self._process_input0
       self._fw.process_close = self._process_close
       if (read_r):

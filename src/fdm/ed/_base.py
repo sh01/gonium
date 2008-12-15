@@ -106,15 +106,22 @@ class EventDispatcherBase:
       self._shutdown_pending = False
       self._timers = []
    
-   def fd_wrap(self, fd:int, set_nonblock:bool=True):
-      """Return FD wrapper based on this ED and specified fd"""
+   def fd_wrap(self, fd:int, set_nonblock:bool=True, fl=None):
+      """Return FD wrapper based on this ED and specified fd
+      
+      fl, if specified, specifies a filelike to call .close() on instead of
+      calling os.close() on fd when the fdw is closed. Specifying it is
+      strongly recommended if one exists; many python fd wrapper objects
+      will insist on closing the wrapped fd at deallocation at the latest.
+      If it had already been closed before then, it might have been reused
+      in the meantime, leading to hard-to-trace EBADF bugs."""
       i = int(fd)
       if (i >= len(self._fdwl)):
          self._fdl_sizeinc(i+1)
       if not (self._fdwl[i] is None):
          return self._fdwl[i]
       
-      rv = _FDWrap(self, fd)
+      rv = _FDWrap(self, fd, fl=fl)
       if (set_nonblock):
          fcntl.fcntl(i, fcntl.F_SETFL, fcntl.fcntl(i,fcntl.F_GETFL) | os.O_NONBLOCK)
       
@@ -188,8 +195,8 @@ def _donothing(*args, **kwargs):
 
 
 class _FDWrap:
-   __slots__ = ('_ed', 'fd', 'process_readability', 'process_writability',
-      'process_hup', 'process_close')
+   __slots__ = ('fd', 'process_readability', 'process_writability',
+      'process_hup', 'process_close', '_ed', '_fl')
    """FD associated monitored by a specific ED. Events are returned by calling
       attributes:
       process_readability() for READ
@@ -197,9 +204,10 @@ class _FDWrap:
       process_close() for connection close
       process_hup() for hup events
    """
-   def __init__(self, ed:EventDispatcherBase, fd:int):
+   def __init__(self, ed:EventDispatcherBase, fd:int, fl=None):
       self._ed = ed
       self.fd = fd
+      self._fl = fl
       self.process_readability = None
       self.process_writability = None
       self.process_close = _donothing
@@ -236,15 +244,20 @@ class _FDWrap:
       """Close this fd."""
       self.read_u()
       self.write_u()
-      os.close(self.fd)
-      
       if (self._ed._fdwl[self.fd] is self):
          self._ed._fdwl[self.fd] = None
+      
+      if not (self._fl is None):
+         self._fl.close()
+      else:
+         os.close(self.fd)
+      
       try:
          self.process_close()
       except Exception:
          _log(40, 'Error in fd-close handler:', exc_info=True)
 
+      self._fl = False
       self._ed = None
    
    def fileno(self):

@@ -82,7 +82,7 @@ class AsyncDataStream:
       else:
          raise ValueError("Unable to find send/write method on object {0!a}".format(filelike,))
       
-      self._fw = ed.fd_wrap(self.fl.fileno())
+      self._fw = ed.fd_wrap(self.fl.fileno(), fl=self.fl)
       self._fw.process_readability = self._process_input0
       self._fw.process_writability = self._output_write
       self._fw.process_close = self._process_close
@@ -144,7 +144,7 @@ class AsyncDataStream:
          return buf
       
       self.send_bytes(map(encode, buffers), *args, **kwargs)
-      
+   
    def send_bytes(self, buffers:collections.Sequence, flush=True):
       """Append set of buffers to pending output and attempt to push.
          Buffers elements must be bytes, bytearray, memoryview or similar."""
@@ -165,7 +165,7 @@ class AsyncDataStream:
          raise ValueError('Asked to discard {0} bytes, but only have {1} in buffer.'.format(bytes, self._index_in))
       self._inbuf[:self._index_in-bytes] = self._inbuf[bytes:self._index_in]
       self._index_in -= bytes
-         
+      
    def close(self):
       """Close wrapped fd, if currently open"""
       if (self._fw):
@@ -198,10 +198,7 @@ class AsyncDataStream:
       try:
          self.process_close()
       finally:
-         try:
-            self.fl.close()
-         except Exception:
-            pass
+         self._fw = None
          self._in = None
          self._out = None
          self._outbuf = None
@@ -334,7 +331,7 @@ class AsyncSockServer:
       self.sock.setblocking(0)
       self.sock.bind(address)
       self.sock.listen(backlog)
-      self._fw = ed.fd_wrap(self.sock.fileno())
+      self._fw = ed.fd_wrap(self.sock.fileno(), fl=self.sock)
       self._fw.process_readability = self._connect_process
       self._fw.read_r()
    
