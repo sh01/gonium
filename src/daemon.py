@@ -49,12 +49,12 @@ def daemon_fork(stdout_filename=b'/dev/null', stderr_filename=b'/dev/null',
    sys.stderr.close()
    
    if (warnings_redirect):
-      warnings_redirect_logging()
+      _warnings_redirect_logging()
    
    if (stdout_filename):
       sys.stdout = open(stdout_filename, 'a+', 1)
    if (stderr_filename):
-      sys.stderr = open(stderr_filename, 'a+', 0)
+      sys.stderr = open(stderr_filename, 'a+', 1)
    
    sys.__stderr__ = sys.__stdout__ = sys.__stdin__ = sys.stdin = None
 
