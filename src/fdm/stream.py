@@ -329,7 +329,7 @@ class AsyncSockServer:
          type_:int=SOCK_STREAM, backlog:int=16):
       self.sock = socket_cls(family, type_, proto)
       self.sock.setblocking(0)
-      self.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+      self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
       self.sock.bind(address)
       self.sock.listen(backlog)
       self._fw = ed.fd_wrap(self.sock.fileno(), fl=self.sock)
