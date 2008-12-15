@@ -20,6 +20,7 @@
 import collections
 import logging
 import subprocess
+import socket
 import sys
 from collections import deque
 from errno import EAGAIN, ECONNRESET, EPIPE, EINPROGRESS, EINTR, ENOBUFS, \
