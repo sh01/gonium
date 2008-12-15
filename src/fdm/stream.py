@@ -313,13 +313,13 @@ class AsyncLineStream(AsyncDataStream):
 class AsyncPopen(subprocess.Popen):
    """Popen subclass that automatically creates stdio Async*Stream instances
       for stdio streams of subprocess"""
-   def __init__(self, ed, *args, stream_cls=AsyncDataStream, **kwargs):
+   def __init__(self, ed, *args, stream_factory=AsyncDataStream, **kwargs):
       subprocess.Popen.__init__(self, *args, **kwargs)
       for name in ('stdin', 'stdout', 'stderr'):
          stream = getattr(self,name)
          if (stream is None):
             continue
-         setattr(self, name + '_async', stream_cls(ed, stream))
+         setattr(self, name + '_async', stream_factory(ed, stream))
 
 
 class AsyncSockServer:
@@ -381,13 +381,15 @@ def _selftest(out=None):
    ed = ED_get()()
    out.write('Using ED {0}\n'.format(ed))
    out.write('==== AsyncLineStream test ====\n')
-   sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stream_cls=AsyncLineStream)
+   sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stream_factory=AsyncLineStream)
    sp.stdout_async.process_input = D1()
    sp.stdout_async.process_close = close_handler
+   stream = sp.stdout_async
    # socket testing code; commented out since it needs a suitably chatty remote
    #sock = AsyncLineStream.build_sock_connect(ed, (('192.168.0.10',6667)))
    #sock.process_input = D1()
    #sock.send_data((b'test\nfoo\nbar\n',),flush=False)
+   #stream = sock
    ads_out = AsyncDataStream(ed, open(out.fileno(),'wb', buffering=0, closefd=False), read_r=False)
    ads_out.output_encoding = 'ascii'
    
