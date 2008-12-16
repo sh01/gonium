@@ -205,7 +205,6 @@ class AsyncDataStream:
    def _output_write(self, _writeregistered:bool=True,
       _known_writable:bool=True):
       """Write output and manage writability notification (un)registering"""
-      firstbuf = True
       while (True):
          try:
             buf = self._outbuf.popleft()
@@ -223,11 +222,9 @@ class AsyncDataStream:
                return
             raise
          
-         if (firstbuf):
-            firstbuf = False
-            if ((0 == rv) and (_known_writable)):
-               self._outbuf.appendleft(buf)
-               raise CloseFD()
+         if ((0 == rv) and (_known_writable)):
+            self._outbuf.appendleft(buf)
+            raise CloseFD()
          
          if (rv < len(buf)):
             # This might happen if send is interrupted by a signal, but that
