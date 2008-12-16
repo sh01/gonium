@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.3
+#!/usr/bin/env python
 #Copyright 2004,2008 Sebastian Hagen
 # This file is part of gonium.
 #

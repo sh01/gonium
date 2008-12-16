@@ -196,13 +196,11 @@ class AsyncDataStream:
 
    def _process_close(self):
       """Internal method for processing FD closing"""
-      try:
-         self.process_close()
-      finally:
-         self._fw = None
-         self._in = None
-         self._out = None
-         self._outbuf = None
+      self._fw = None
+      self._in = None
+      self._out = None
+      self._outbuf = None
+      self.process_close()
 
    def _output_write(self, _writeregistered:bool=True,
       _known_writable:bool=True):
