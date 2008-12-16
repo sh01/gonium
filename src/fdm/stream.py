@@ -248,7 +248,7 @@ class AsyncDataStream:
       try:
          br = self._in(memoryview(self._inbuf)[self._index_in:])
       except IOError as exc:
-         if (exc.errno == EINTR):
+         if (exc.errno in self._SOCK_ERRNO_TRANS):
             return
          if (exc.errno in self._SOCK_ERRNO_FATAL):
             raise CloseFD()
