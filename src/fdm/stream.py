@@ -216,7 +216,7 @@ class AsyncDataStream:
             rv = self._out(buf)
          except sockerr as exc:
             if (exc.errno in self._SOCK_ERRNO_TRANS):
-               self._outbuf.append(buf)
+               self._outbuf.appendleft(buf)
                break
             if (exc.errno in self._SOCK_ERRNO_FATAL):
                self.close()
