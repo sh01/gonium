@@ -155,17 +155,17 @@ class AsyncDataStream:
       if (flush):
          self._output_write(had_pending, _known_writable=False)
 
-   def discard_inbuf_data(self, bytes:int=None):
-      """Discard <bytes> of in-buffered data.
+   def discard_inbuf_data(self, count:int=None):
+      """Discard <count> bytes of in-buffered data.
       
-      If bytes is unspecified or None, discard all of it."""
-      if ((bytes is None) or (bytes == self._index_in)):
+      If count is unspecified or None, discard all of it."""
+      if ((count is None) or (count == self._index_in)):
          self._index_in = 0
          return
-      if (bytes > self._index_in):
-         raise ValueError('Asked to discard {0} bytes, but only have {1} in buffer.'.format(bytes, self._index_in))
-      self._inbuf[:self._index_in-bytes] = self._inbuf[bytes:self._index_in]
-      self._index_in -= bytes
+      if (count > self._index_in):
+         raise ValueError('Asked to discard {0} bytes, but only have {1} in buffer.'.format(count, self._index_in))
+      self._inbuf[:self._index_in-count] = self._inbuf[count:self._index_in]
+      self._index_in -= count
       
    def close(self):
       """Close wrapped fd, if currently open"""
@@ -375,7 +375,10 @@ def _selftest(out=None):
    ed = ED_get()()
    out.write('Using ED {0}\n'.format(ed))
    out.write('==== AsyncLineStream test ====\n')
-   sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stream_factory=AsyncLineStream)
+   def alsf(ed, stream):
+      return AsyncLineStream(ed, stream, inbufsize_start=1)
+   
+   sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stream_factory=alsf)
    sp.stdout_async.process_input = D1()
    sp.stdout_async.process_close = close_handler
    stream = sp.stdout_async
