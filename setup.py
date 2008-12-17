@@ -20,7 +20,10 @@ from distutils.core import setup, Extension
 if (sys.version_info[0] <= 2):
    raise Exception('This gonium version needs a python >= 3.0') 
 
-module1 = Extension('gonium.posix._signal', sources = ['src/posix/_signalmodule.c'])
+ext_modules = [
+   Extension('gonium.posix._signal', sources = ['src/posix/_signalmodule.c']),
+   Extension('gonium.posix._aio', sources = ['src/posix/_aiomodule.c'])
+]
 
 
 setup(name='gonium',
@@ -30,7 +33,7 @@ setup(name='gonium',
    author_email='sebastian_hagen@memespace.net',
    url='http://git.memespace.net/git/gonium.git',
    packages=('gonium', 'gonium.fdm', 'gonium.hacks', 'gonium.fdm.ed', 'gonium.posix', 'gonium.linux'),
-   ext_modules = [module1],
+   ext_modules=ext_modules,
    package_dir={'gonium':'src'}
 )
 
