@@ -53,7 +53,7 @@ class SignalCatcher:
       """Called on overflow. This implementation does nothing."""
       pass
    
-   def handle_signal(self, siginfo:_m.SigInfo):
+   def handle_signals(self, siginfo:_m.SigInfo):
       """Handle signal. This implementation does nothing."""
       pass
    
@@ -69,12 +69,11 @@ class SignalCatcher:
       (sd, overflow) = self._m.saved_signals_get()
       if (overflow):
          self.handle_overflow()
-      for siginfo in sd:
-         try:
-            self.handle_signal(siginfo)
-         except Exception:
-            _log(40, 'Exception in signal handler called on siginfo'
-                      '{0}:'.format(siginfo), exc_info=True)
+      try:
+         self.handle_signals(sd)
+      except Exception:
+         _log(40, 'Exception in signal handler called on siginfos'
+                  '{0}:'.format(sd), exc_info=True)
 
 
 def _selftest():
@@ -112,11 +111,12 @@ def _selftest():
    sc = SignalCatcher(ed)
    sigcount = 0
    
-   def sighandler(siginfo):
+   def sighandler(siginfo_l):
       nonlocal sigcount
-      sigcount += 1
-      print('WE GET SIGNAL: {0!a}'.format(siginfo))
-   sc.handle_signal = sighandler
+      for si in siginfo_l:
+         sigcount += 1
+         print('WE GET SIGNAL: {0!a}'.format(si))
+   sc.handle_signals = sighandler
    def ofhandler():
       print('...overflowed.')
    sc.handle_overflow = ofhandler
