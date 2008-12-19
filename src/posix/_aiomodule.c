@@ -21,9 +21,7 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* POSIX AIO interface
-   TODO: actually implement this
-*/
+/* POSIX AIO interface */
 
 /* Give productive feedback to people trying to link this with Python 2.x */
 #if PY_MAJOR_VERSION < 3
@@ -32,12 +30,149 @@
 
 #define CBPA_LEN_START 32
 
+#ifdef HAVE_LARGEFILE_SUPPORT
+typedef off64_t _fdoff_t;
+#define __AIORN_FMT "iOOL"
+#else
+typedef off_t _fdoff_t;
+#define __AIORN_FMT "iOOl"
+#endif
+
 struct timespec tv_zero;
 
 typedef struct {
    PyObject_HEAD
-   struct aiocb **cbpa;
+   Py_buffer bufview;
+   int mode;
+   int fd;
+   _fdoff_t offset;
+   char submitted;
+   ssize_t rc; //return code
+} AIORequest;
+
+static PyObject *AIORequest_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+   static char *kwlist[] = {"mode", "buffer", "file", "offset", NULL};
+   int mode, bufflags, fd;
+   PyObject *buf, *filelike;
+   AIORequest *rv;
+   _fdoff_t offset;
+   
+   if (!PyArg_ParseTupleAndKeywords(args, kwargs, __AIORN_FMT, kwlist, &mode,
+      &buf, &filelike, &offset))
+      return NULL;
+   
+   if (mode == LIO_READ) bufflags = PyBUF_WRITABLE;
+   else if (mode == LIO_WRITE) bufflags = PyBUF_SIMPLE;
+   else {
+      PyErr_SetString(PyExc_ValueError, "Invalid mode.");
+      return NULL;
+   }
+   if ((fd = PyObject_AsFileDescriptor(filelike)) == -1) return NULL;
+   if (!(rv = (AIORequest*)type->tp_alloc(type, 0))) return NULL;
+   rv->bufview.buf = NULL;
+   
+   if (PyObject_GetBuffer(buf, &rv->bufview, bufflags)) {
+      Py_DECREF(rv);
+      return NULL;
+   }
+   rv->fd = fd;
+   rv->offset = offset;
+   rv->mode = mode;
+   rv->submitted = 0;
+   rv->rc = 0;
+   return (void*) rv;
+}
+
+inline static void _AIORequest_bufviewdealloc(Py_buffer *bufview) {
+   if (!(bufview->buf)) return;
+   PyBuffer_Release(bufview);
+   bufview->buf = NULL;
+}
+
+static void AIORequest_dealloc(AIORequest *self) {
+   _AIORequest_bufviewdealloc(&self->bufview);
+   Py_TYPE(self)->tp_free(self);
+}
+
+static PyObject* AIORequest_fd_get(AIORequest *self, void *closure) {
+   return PyLong_FromLong(self->fd);
+}
+static PyObject* AIORequest_mode_get(AIORequest *self, void *closure) {
+   return PyLong_FromLong(self->mode);
+}
+static PyObject* AIORequest_offset_get(AIORequest *self, void *closure) {
+   return PyLong_FromLongLong(self->offset);
+}
+static PyObject* AIORequest_rc_get(AIORequest *self, void *closure) {
+   return PyLong_FromLong(self->rc);
+}
+static PyObject* AIORequest_submitted_get(AIORequest *self, void *closure) {
+   return PyLong_FromLong(self->submitted);
+}
+
+static PyMethodDef AIORequest_methods[] = {
+   {NULL}  /* Sentinel */
+};
+
+static PyGetSetDef AIORequest_getsetters[] = {
+   {"fd", (getter)AIORequest_fd_get, (setter)NULL, "File descriptor"},
+   {"offset", (getter)AIORequest_offset_get, (setter)NULL, "File descriptor"},
+   {"rc", (getter)AIORequest_rc_get, (setter)NULL, "Return code"},
+   {"submitted", (getter)AIORequest_submitted_get, (setter)NULL,
+    "Boolean variable indicating whether this request has been submitted yet"},
+   {"mode", (getter)AIORequest_mode_get, (setter)NULL, "Mode of access"},
+   {NULL}  /* Sentinel */
+};
+
+
+static PyTypeObject AIORequestType = {
+   PyVarObject_HEAD_INIT(&PyType_Type, 0)
+   "_aio.AIORequest",         /* tp_name */
+   sizeof(AIORequest),        /* tp_basicsize */
+   0,                         /* tp_itemsize */
+   (destructor)AIORequest_dealloc, /* tp_dealloc */
+   0,                         /* tp_print */
+   0,                         /* tp_getattr */
+   0,                         /* tp_setattr */
+   0,                         /* tp_compare */
+   0,                         /* tp_repr */
+   0,                         /* tp_as_number */
+   0,                         /* tp_as_sequence */
+   0,                         /* tp_as_mapping */
+   0,                         /* tp_hash  */
+   0,                         /* tp_call */
+   0,                         /* tp_str */
+   0,                         /* tp_getattro */
+   0,                         /* tp_setattro */
+   0,                         /* tp_as_buffer */
+   Py_TPFLAGS_BASETYPE,       /* tp_flags */
+   "AIO read/write request",  /* tp_doc */
+   0,		              /* tp_traverse */
+   0,		              /* tp_clear */
+   0,		              /* tp_richcompare */
+   0,		              /* tp_weaklistoffset */
+   0,		              /* tp_iter */
+   0,		              /* tp_iternext */
+   AIORequest_methods,        /* tp_methods */
+   0,                         /* tp_members */
+   AIORequest_getsetters,     /* tp_getset */
+   0,                         /* tp_base */
+   0,                         /* tp_dict */
+   0,                         /* tp_descr_get */
+   0,                         /* tp_descr_set */
+   0,                         /* tp_dictoffset */
+   0,                         /* tp_init */
+   0,                         /* tp_alloc */
+   AIORequest_new             /* tp_new */
+};
+
+
+typedef struct {
+   PyObject_HEAD
+   struct aiocb **cbpa;     //control block pointer array
+   AIORequest **rpa; //request pointer array
    size_t cbpa_len;
+   struct sigevent se;
 } AIOManager;
 
 
@@ -46,19 +181,39 @@ static PyObject *AIOManager_new(PyTypeObject *type, PyObject *args, PyObject *kw
    if (!(rv = (AIOManager*)type->tp_alloc(type, 0))) return NULL;
    rv->cbpa = NULL;
    rv->cbpa_len = 0;
+   rv->se.sigev_notify = SIGEV_SIGNAL;
+   rv->se.sigev_signo = SIGIO;
+   rv->se.sigev_value.sival_int = 0;
+   
    return (void*) rv;
 }
 
-int AIOManager_aiocbrs(AIOManager *self, size_t elcount_new) {
+static inline int AIOManager_aiocbrs(AIOManager *self, size_t elcount_new) {
    size_t i;
    struct aiocb **cbpa_new;
+   AIORequest **rpa_new;
    
    if (!(cbpa_new = PyMem_Malloc(sizeof(struct aiocb*)*elcount_new))) return -1;
-   for (i = 0; i < elcount_new; i++)
-      cbpa_new[i] = ((i < self->cbpa_len) ? self->cbpa[i] : NULL);
+   if (!(rpa_new = PyMem_Malloc(sizeof(struct AIORequest*)*elcount_new))) {
+      PyMem_Free(cbpa_new);
+      return -1;
+   }
    
+   for (i = 0; i < self->cbpa_len; i++) {
+      cbpa_new[i] = self->cbpa[i];
+      rpa_new[i] = self->rpa[i];
+   }
+   for (i = self->cbpa_len; i < elcount_new; i++) {
+      cbpa_new[i] = NULL;
+      rpa_new[i] = NULL;
+   }
+   
+   // This might fail horribly if we're called reentrantly (e.g. from a signal
+   // handler); can this happen in CPython?
    PyMem_Free(self->cbpa);
+   PyMem_Free(self->rpa);
    self->cbpa = cbpa_new;
+   self->rpa = rpa_new;
    self->cbpa_len = elcount_new;
    return 0;
 }
@@ -84,10 +239,12 @@ static PyObject *AIOManager_suspend(AIOManager *self, PyObject *args) {
    return NULL;
 }
 
-static PyObject *AIOManager_events_process(AIOManager *self, PyObject *args) {
+static PyObject *AIOManager_get_results(AIOManager *self, PyObject *args) {
    PyObject *eventlist, *pyevent, *rv;
+   AIORequest *req;
    Py_ssize_t evcount, i, event;
    struct aiocb *cb;
+   int rc;
    
    if (!PyArg_ParseTuple(args, "O", &eventlist)) return NULL;
    evcount = PySequence_Size(eventlist);
@@ -101,26 +258,91 @@ static PyObject *AIOManager_events_process(AIOManager *self, PyObject *args) {
           PyErr_SetString(PyExc_ValueError, "Excessively large index.");
           goto error_exit;
       }
-      if (!(cb = self->cbpa[i])) {
+      if ((!(cb = self->cbpa[i])) || ((rc = aio_error(cb)) == EINPROGRESS)) {
          Py_INCREF(Py_None);
          if (PyTuple_SetItem(rv, i, Py_None)) goto error_exit;
          continue;
       }
-      if (!(pyevent = PyLong_FromLong(aio_error(cb)))) return NULL;
-      if (PyTuple_SetItem(rv, i, pyevent)) goto error_exit;
-      continue;
+      req = self->rpa[i];
+      if (!rc) rc = aio_return(self->cbpa[i]);
+      req->rc = rc;
+      _AIORequest_bufviewdealloc(&req->bufview);
       
-      error_exit:
-      Py_DECREF(rv);
-      return NULL;
+      if (PyTuple_SetItem(rv, i, (PyObject*) req)) goto error_exit;
+      
+      PyMem_Free(self->cbpa[i]);
+      self->cbpa[i] = NULL;
+      self->rpa[i] = NULL;
    }
+   // FIXME: do an aio_suspend() and processing of other events here!
+   
    return rv;
+   error_exit:
+   Py_DECREF(rv);
+   return NULL;
 }
 
+static PyObject *AIOManager_io(AIOManager *self, PyObject *args) {
+   AIORequest *req;
+   size_t i;
+   struct aiocb *cb_new;
+   int rc;
+   
+   if (!PyArg_ParseTuple(args, "O", &req)) return NULL;
+   if (!PyObject_IsInstance((PyObject*) req, (PyObject*) &AIORequestType)) {
+      PyErr_SetString(PyExc_TypeError, "Argument 0 must be of type AIORequest.");
+      return NULL;
+   }
+   if (req->submitted) {
+      PyErr_SetString(PyExc_TypeError, "AIORequest has already been submitted earlier.");
+      return NULL;
+   }
+   req->submitted = 1;
+   
+   i = 0;
+   while ((i < self->cbpa_len) && (self->rpa[i])) i++;
+   // resize arrays
+   if ((i == self->cbpa_len) && (AIOManager_aiocbrs(self, self->cbpa_len*2)))
+      return NULL;
+   
+   if (!(cb_new = PyMem_Malloc(sizeof(struct aiocb)))) return NULL;
+   
+   cb_new->aio_fildes = req->fd;
+   cb_new->aio_reqprio = 0;
+   cb_new->aio_buf = req->bufview.buf;
+   cb_new->aio_nbytes = req->bufview.len;
+   cb_new->aio_offset = req->offset;
+   cb_new->aio_sigevent = self->se;
+   cb_new->aio_sigevent.sigev_value.sival_int = i;
+   
+   self->cbpa[i] = cb_new;
+   self->rpa[i] = req;
+   if (req->mode == LIO_READ) rc = aio_read(cb_new);
+   else if (req-> mode == LIO_WRITE) rc = aio_write(cb_new);
+   else {
+      // can't happen
+      self->cbpa[i] = NULL;
+      self->rpa[i] = NULL;
+      PyMem_Free(cb_new);
+      PyErr_SetString(PyExc_SystemError, "Can't happen event (_aio bug?): AIORequest had bogus type");
+      return NULL;
+   }
+   if (rc) {
+      self->cbpa[i] = NULL;
+      self->rpa[i] = NULL;
+      PyMem_Free(cb_new);
+      PyErr_SetFromErrno(PyExc_IOError);
+      return NULL;
+   }
+   
+   Py_INCREF(req);
+   Py_RETURN_NONE;
+}
 
 static PyMethodDef AIOManager_methods[] = {
+   {"io", (PyCFunction)AIOManager_io, METH_VARARGS, "aio_{read,write} wrapper: submit AIO request"},
    {"suspend", (PyCFunction)AIOManager_suspend, METH_VARARGS, "aio_suspend() wrapper: Wait for AIO event"},
-   {"events_process", (PyCFunction)AIOManager_events_process, METH_VARARGS, "Call aio_error on specified events"},
+   {"get_results", (PyCFunction)AIOManager_get_results, METH_VARARGS, "Call aio_error,aio_return on specified events"},
    {NULL}  /* Sentinel */
 };
 
@@ -183,7 +405,12 @@ PyInit__aio(void) {
    tv_zero.tv_sec = 0;
    tv_zero.tv_nsec = 0;
    
-   /* SigInfo type setup */
+   /* AIORequest type setup */
+   if (PyType_Ready(&AIORequestType) < 0) return NULL;
+   Py_INCREF(&AIORequestType);
+   PyModule_AddObject(m, "AIORequest", (PyObject *)&AIORequestType);
+   
+   /* AIOManager type setup */
    if (PyType_Ready(&AIOManagerType) < 0) return NULL;
    Py_INCREF(&AIOManagerType);
    PyModule_AddObject(m, "AIOManager", (PyObject *)&AIOManagerType);

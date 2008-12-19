@@ -101,6 +101,7 @@ class EventDispatcherPollBase(EventDispatcherBaseTT):
       POLLOUT = self.POLLOUT
       POLLERR = self.POLLERR
       POLLHUP = self.POLLHUP
+      self._shutdown_pending = False
       while (not self._shutdown_pending):
          if (timers != []):
             timeout = max(self._timers[0]._expire_ts-ttime(),0)
