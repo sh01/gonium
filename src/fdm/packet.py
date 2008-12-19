@@ -67,5 +67,15 @@ class AsyncPacketSock:
          self.fl.sendto(buf, target)
 
    def _process_close(self):
+      self._fw = None
       self.process_close()
+   
+   def close(self):
+      """Close wrapped fd, if currently open"""
+      if (self._fw):
+         self._fw.close()
+   
+   def __bool__(self) -> bool:
+      """Returns True iff our wrapped FD is still open"""
+      return bool(self._fw)
 
