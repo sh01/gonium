@@ -21,6 +21,7 @@ import os
 
 from . import _signal
 from ._signal import SigSet, SA_NOCLDSTOP, SA_ONSTACK, SA_RESETHAND, SA_RESTART, SA_NOCLDWAIT, SA_NODEFER
+from ..event_multiplexing import EventMultiplexer
 
 _logger = logging.getLogger('gonium.posix.signal')
 _log = _logger.log
@@ -74,6 +75,15 @@ class SignalCatcher:
       except Exception:
          _log(40, 'Exception in signal handler called on siginfos'
                   '{0}:'.format(sd), exc_info=True)
+
+
+class EMSignalCatcher(SignalCatcher):
+   """SignalCatcher subclass that automatically sets handle_signals() and
+      handle_overflow() to seperate EventMultiplexers."""
+   def __init__(self, *args, **kwargs):
+      SignalCatcher.__init__(self, *args, **kwargs)
+      self.handle_signals = EventMultiplexer(self)
+      self.handle_overflow = EventMultiplexer(self)
 
 
 def _selftest():

@@ -51,7 +51,7 @@ typedef struct {
 } AIORequest;
 
 static PyObject *AIORequest_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
-   static char *kwlist[] = {"mode", "buffer", "file", "offset", NULL};
+   static char *kwlist[] = {"mode", "buf", "filelike", "offset", NULL};
    int mode, bufflags, fd;
    PyObject *buf, *filelike;
    AIORequest *rv;
@@ -231,12 +231,40 @@ static PyObject *AIOManager_init(AIOManager *self, PyObject *args, PyObject *kwa
 static PyObject *AIOManager_suspend(AIOManager *self, PyObject *args) {
    struct timespec tv;
    double timeout = 0.0;
+   int rc;
+   PyObject *rv;
+   AIORequest *req;
+   struct aiocb *cb;
+   size_t i;
+   
    if (!PyArg_ParseTuple(args, "d", &timeout)) return NULL;
    tv.tv_sec = (long) timeout;
    tv.tv_nsec = ((timeout - (double)(long) timeout) * 1E9);
-   if (!aio_suspend((const struct aiocb **)self->cbpa, self->cbpa_len, &tv)) Py_RETURN_NONE;
-   PyErr_SetFromErrno(PyExc_Exception);
-   return NULL;
+   
+   rc = aio_suspend((const struct aiocb **)self->cbpa, self->cbpa_len, &tv);
+   if (rc) {
+      if (errno == EAGAIN) return PyList_New(0);
+      PyErr_SetFromErrno(PyExc_IOError);
+      return NULL;
+   }
+   rv = PyList_New(0);
+   
+   for (i = 0; i < self->cbpa_len; i++) {
+      if (!(cb = self->cbpa[i])) continue;
+      if ((rc = aio_error(cb)) == EINPROGRESS) continue;
+      if (!rc) rc = aio_return(self->cbpa[i]);
+      req = self->rpa[i];
+      req->rc = rc;
+      if (PyList_Append(rv, (PyObject*) req)) {
+         Py_DECREF(rv);
+         return NULL;
+      }
+      Py_DECREF(req);
+      PyMem_Free(self->cbpa[i]);
+      self->cbpa[i] = NULL;
+      self->rpa[i] = NULL;
+   }
+   return rv;
 }
 
 static PyObject *AIOManager_get_results(AIOManager *self, PyObject *args) {
@@ -274,7 +302,6 @@ static PyObject *AIOManager_get_results(AIOManager *self, PyObject *args) {
       self->cbpa[i] = NULL;
       self->rpa[i] = NULL;
    }
-   // FIXME: do an aio_suspend() and processing of other events here!
    
    return rv;
    error_exit:
@@ -341,7 +368,7 @@ static PyObject *AIOManager_io(AIOManager *self, PyObject *args) {
 
 static PyMethodDef AIOManager_methods[] = {
    {"io", (PyCFunction)AIOManager_io, METH_VARARGS, "aio_{read,write} wrapper: submit AIO request"},
-   {"suspend", (PyCFunction)AIOManager_suspend, METH_VARARGS, "aio_suspend() wrapper: Wait for AIO event"},
+   {"suspend", (PyCFunction)AIOManager_suspend, METH_VARARGS, "aio_suspend() wrapper: Wait for AIO event and return all received events"},
    {"get_results", (PyCFunction)AIOManager_get_results, METH_VARARGS, "Call aio_error,aio_return on specified events"},
    {NULL}  /* Sentinel */
 };
@@ -367,7 +394,7 @@ static PyTypeObject AIOManagerType = {
    0,                         /* tp_getattro */
    0,                         /* tp_setattro */
    0,                         /* tp_as_buffer */
-   Py_TPFLAGS_DEFAULT,        /* tp_flags */
+   Py_TPFLAGS_BASETYPE,       /* tp_flags */
    "AIO-set managing objects",/* tp_doc */
    0,		              /* tp_traverse */
    0,		              /* tp_clear */
