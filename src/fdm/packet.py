@@ -43,7 +43,7 @@ class AsyncPacketSock:
       self.bufsize = bufsize
    
    def _process_input0(self):
-      while (True):
+      while (self._fw is not None):
          try:
             (data, addrinfo) = self.fl.recvfrom(self.bufsize)
          except sockerr as exc:

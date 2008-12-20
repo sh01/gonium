@@ -29,7 +29,15 @@ from ._aio import LIO_READ, LIO_WRITE, AIOManager, AIORequest
 _logger = logging.getLogger('gonium.posix.aio')
 _log = _logger.log
 
-class _EAIORequest(AIORequest):
+class EAIORequest(AIORequest):
+   def __new__(cls, *args, callback):
+      return AIORequest.__new__(cls, *args)
+   
+   def __init__(self, mode, buf, *args, callback):
+      AIORequest.__init__(mode, buf, *args)
+      self.buf = buf
+      self.callback = callback
+   
    def __repr__(self):
       return ('<AIORequest at {0}, mode {1}, fd {2}:{3}, memory {4}({5} bytes)>'
               ''.format(id(self), self.mode, self.fd, self.offset, self.buf,
@@ -72,8 +80,7 @@ class EAIOManager(AIOManager):
       """Deal with lost signals"""
       self._process_finished_requests(self.suspend(0))
    
-   def io(self, mode:int, buf:(bytes,bytearray,memoryview), filelike,
-         offset:int, *, callback:collections.Callable) -> _EAIORequest:
+   def io(self, req_s:collections.Sequence):
       """Request IO action
       
       mode: Either LIO_WRITE or LIO_READ
@@ -82,11 +89,8 @@ class EAIOManager(AIOManager):
       offset: offset on filelike at which to start IO
       callback: object to call when this is finished
       """
-      rv = _EAIORequest(mode, buf, filelike, offset)
-      rv.buf = buf
-      rv.callback = callback
-      AIOManager.io(self,rv)
-      return rv
+      for req in req_s:
+         AIOManager.io(self,req)
       
 
 def _selftest():
@@ -171,7 +175,7 @@ def _selftest():
    for i in range(TEST_COUNT):
       buf = bytearray(CHUNKSIZE)
       buf[:4] = struct.pack('>L', i)
-      aio_m.io(LIO_WRITE, buf, f, i*CHUNKSIZE, callback=aio_wres_process)
+      aio_m.io((EAIORequest(LIO_WRITE, buf, f, i*CHUNKSIZE, callback=aio_wres_process),))
    
    print('== Write test ==')
    ed.set_timer(50, ed.shutdown)
@@ -187,7 +191,7 @@ def _selftest():
    
    for i in range(TEST_COUNT):
       buf = bytearray(CHUNKSIZE)
-      aio_m.io(LIO_READ, buf, f, i*CHUNKSIZE, callback=aio_rres_process)
+      aio_m.io((EAIORequest(LIO_READ, buf, f, i*CHUNKSIZE, callback=aio_rres_process),))
    
    fail_count = 0
    ev_count = 0
@@ -195,7 +199,7 @@ def _selftest():
    results_check()
    
    f.close()
-   #os.remove(fn)
+   os.remove(fn)
 
 
 if (__name__ == '__main__'):
