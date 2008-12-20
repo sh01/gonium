@@ -211,8 +211,12 @@ class _FDWrap:
       self.process_readability = None
       self.process_writability = None
       self.process_close = _donothing
-      self.process_hup = self.close
-      
+   
+   def process_hup(self):
+      """Process hup. This implementation closes the fdw, if currently open"""
+      if (self):
+         self.close()
+   
    # For documentation only
    def read_r(self):
       """Register fd for read events"""

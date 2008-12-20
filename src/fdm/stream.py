@@ -18,6 +18,7 @@
 # FDM Stream handling classes.
 
 import collections
+import errno
 import logging
 import subprocess
 import socket
