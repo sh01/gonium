@@ -211,7 +211,6 @@ class AsyncDataStream:
             buf = self._outbuf.popleft()
          except IndexError:
             break
-         
          try:
             rv = self._out(buf)
          except sockerr as exc:
