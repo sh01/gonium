@@ -29,6 +29,7 @@ from ._aio import LIO_READ, LIO_WRITE, AIOManager, AIORequest
 _logger = logging.getLogger('gonium.posix.aio')
 _log = _logger.log
 
+
 class EAIORequest(AIORequest):
    def __new__(cls, *args, callback):
       return AIORequest.__new__(cls, *args)
@@ -46,6 +47,10 @@ class EAIORequest(AIORequest):
 
 class EAIOManager(AIOManager):
    """AIOManager subclass with eventing support"""
+   REQ_CLS = EAIORequest
+   MODE_READ = LIO_READ
+   MODE_WRITE = LIO_WRITE
+   
    AIO_SIGNAL = signal.SIGIO
    def __init__(self, sc:signal_.EMSignalCatcher, *args, **kwargs):
       sc.sighandler_install(self.AIO_SIGNAL, SA_RESTART)
