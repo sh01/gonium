@@ -96,9 +96,14 @@ class EAIOManager(AIOManager):
       """
       for req in req_s:
          AIOManager.io(self,req)
-      
+
+
 
 def _selftest():
+   _test_aiom(EAIOManager, 1024, 4096)
+
+
+def _test_aiom(aiom_cls, test_count, chunksize):
    import struct
    from ..fdm import ED_get
    from .signal import EMSignalCatcher, SA_RESTART
@@ -106,9 +111,7 @@ def _selftest():
    
    ed = ED_get()()
    sc = EMSignalCatcher(ed)
-   aio_m = EAIOManager(sc)
-   TEST_COUNT = 1024
-   CHUNKSIZE = 40960
+   aio_m = aiom_cls(sc)
    
    fn = b'__gonium_aio.test.tmp'
    
@@ -131,7 +134,7 @@ def _selftest():
       nonlocal fail_count, ev_count
       if (req.rc > 0):
          ev_count += 1
-         if (ev_count == TEST_COUNT):
+         if (ev_count == test_count):
             ed.shutdown()
          return
       print('req {0} failed with rc {1}.'.format(req, req.rc))
@@ -140,9 +143,9 @@ def _selftest():
    def aio_rres_process(req):
       nonlocal fail_count, ev_count
       (i,) = struct.unpack('>L', req.buf[:4])
-      if (req.offset == i*CHUNKSIZE):
+      if (req.offset == i*chunksize):
          ev_count += 1
-         if (ev_count == TEST_COUNT):
+         if (ev_count == test_count):
             ed.shutdown()
          return
       print('FAIL: Req at offset {0}; read: {1}'.format(req.offset, req.buf))
@@ -152,23 +155,23 @@ def _selftest():
       f.seek(0)
       i = 0
       while (True):
-         data = f.read(CHUNKSIZE)
+         data = f.read(chunksize)
          if (len(data) == 0):
             break
-         if (len(data) < CHUNKSIZE):
+         if (len(data) < chunksize):
             raise ValueError('Last block blockingly read contained {0} bytes: {1}.'.format(len(data), data))
          (j,) = struct.unpack('>L', data[:4])
          if (j == i):
             i += 1
             continue
-         raise ValueError('Read bytes {0} from index {1}.'.format(data, i*CHUNKSIZE))
+         raise ValueError('Read bytes {0} from index {1}.'.format(data, i*chunksize))
    
    def results_check():
       if (fail_count):
-         raise Exception("{0} of {1} of {2} tests failed.".format(fail_count, ev_count, TEST_COUNT))
-      if (ev_count != TEST_COUNT):
-         raise Exception("Only got results for {0} of {1} tests (no confirmed failures).".format(ev_count, TEST_COUNT))
-      print('{0} of {1} tests succeeded; no confirmed failures.'.format(ev_count, TEST_COUNT))
+         raise Exception("{0} of {1} of {2} tests failed.".format(fail_count, ev_count, test_count))
+      if (ev_count != test_count):
+         raise Exception("Only got results for {0} of {1} tests (no confirmed failures).".format(ev_count, test_count))
+      print('{0} of {1} tests succeeded; no confirmed failures.'.format(ev_count, test_count))
    
    f = open(fn,'w+b')
    
@@ -177,10 +180,10 @@ def _selftest():
    sc.handle_overflow.new_listener(ofhandler)
    sc.handle_signals.new_listener(handle_signals)
    
-   for i in range(TEST_COUNT):
-      buf = bytearray(CHUNKSIZE)
+   for i in range(test_count):
+      buf = bytearray(chunksize)
       buf[:4] = struct.pack('>L', i)
-      aio_m.io((EAIORequest(LIO_WRITE, buf, f, i*CHUNKSIZE, callback=aio_wres_process),))
+      aio_m.io((EAIORequest(LIO_WRITE, buf, f, i*chunksize, callback=aio_wres_process),))
    
    print('== Write test ==')
    ed.set_timer(50, ed.shutdown)
@@ -194,9 +197,9 @@ def _selftest():
    class AIORS(AIORequest):
       pass
    
-   for i in range(TEST_COUNT):
-      buf = bytearray(CHUNKSIZE)
-      aio_m.io((EAIORequest(LIO_READ, buf, f, i*CHUNKSIZE, callback=aio_rres_process),))
+   for i in range(test_count):
+      buf = bytearray(chunksize)
+      aio_m.io((EAIORequest(LIO_READ, buf, f, i*chunksize, callback=aio_rres_process),))
    
    fail_count = 0
    ev_count = 0
