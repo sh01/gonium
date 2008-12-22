@@ -98,8 +98,9 @@ class EAIOManager(AIOManager):
 def _selftest():
    _test_aiom(EAIOManager)
 
-
+#1024, 4096
 def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
+   import os
    import struct
    from ..fdm import ED_get
    from .signal import EMSignalCatcher, SA_RESTART
@@ -150,10 +151,9 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
       fail_count += 1
    
    def aio_phase2():
-      f.seek(0)
       i = 0
       while (True):
-         data = f.read(chunksize)
+         data = os.read(f, chunksize)
          if (len(data) == 0):
             break
          if (len(data) < chunksize):
@@ -171,7 +171,7 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
          raise Exception("Only got results for {0} of {1} tests (no confirmed failures).".format(ev_count, test_count))
       print('{0} of {1} tests succeeded; no confirmed failures.'.format(ev_count, test_count))
    
-   f = open(fn,'w+b')
+   f = os.open(fn,os.O_RDWR|os.O_CREAT)
    
    fail_count = 0
    ev_count = 0
@@ -188,9 +188,13 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
    print('== Write test ==')
    aio_m.io(write_cmds)
    write_cmds.clear()
-   ed.set_timer(900, ed.shutdown)
+   #ed.set_timer(900, ed.shutdown)
    ed.event_loop()
+   os.close(f)
+   f = os.open(fn,os.O_RDWR)
    results_check()
+   os.close(f)
+   f = os.open(fn,os.O_RDWR)
    print('== Checking written data ==')
    aio_phase2()
    print('...no errors detected.')
@@ -210,7 +214,7 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
    ed.event_loop()
    results_check()
    
-   f.close()
+   os.close(f)
    os.remove(fn)
 
 

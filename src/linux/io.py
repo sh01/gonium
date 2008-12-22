@@ -41,7 +41,7 @@ class LinuxAIOManager(IOManager):
    REQ_CLS = LinuxAIORequest
    MODE_READ = IO_CMD_PREAD
    MODE_WRITE = IO_CMD_PWRITE
-   def __new__(cls, sa:ServiceAggregate, size=1024):
+   def __new__(cls, sa:ServiceAggregate, size=12800):
       return IOManager.__new__(cls, size)
    
    def __init__(self, sa, *args, **kwargs):
