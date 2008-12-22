@@ -184,11 +184,11 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
       buf[:4] = struct.pack('>L', i)
       write_cmds.append(aio_m.REQ_CLS(aio_m.MODE_WRITE, buf, f, i*chunksize, callback=aio_wres_process))
    
-   aio_m.io(write_cmds)
-   write_cmds.clear()
    
    print('== Write test ==')
-   ed.set_timer(50, ed.shutdown)
+   aio_m.io(write_cmds)
+   write_cmds.clear()
+   ed.set_timer(900, ed.shutdown)
    ed.event_loop()
    results_check()
    print('== Checking written data ==')

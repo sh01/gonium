@@ -280,7 +280,7 @@ static PyObject *IOManager_submit(IOManager *self, PyObject *args) {
    l = cb - self->cbs;
    rc = io_submit(self->ctx, l, self->cbs);
    if (rc < 0) {
-      errno = rc;
+      errno = -rc;
       PyErr_SetFromErrno(PyExc_OSError);
       return IOM_iocb_cleanup(self, cb);
    }
