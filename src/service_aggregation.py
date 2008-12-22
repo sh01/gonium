@@ -16,8 +16,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from .fdm import ED_get
-from .posix.signal import EMSignalCatcher
-from .posix.aio import EAIOManager
 
 
 class ServiceAggregate:
@@ -28,10 +26,14 @@ class ServiceAggregate:
       if (sc is None):
          sc = EMSignalCatcher(ed)
       if (aio is None):
-         aio = EAIOManager(sc)
+         aio = EAIOManager(self)
       self.ed = ed
       self.sc = sc
       self.aio = aio
+
+# Ugly workaround for cyclical inter-file dependencies
+from .posix.signal import EMSignalCatcher
+from .posix.aio import EAIOManager
 
 
 def _selftest():

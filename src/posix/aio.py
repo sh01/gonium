@@ -21,8 +21,8 @@ import os
 import signal
 from collections import deque
 
-from ..posix import signal as signal_
 from .signal import SA_RESTART
+from ..service_aggregation import ServiceAggregate
 from . import _aio
 from ._aio import LIO_READ, LIO_WRITE, AIOManager, AIORequest
 
@@ -52,11 +52,11 @@ class EAIOManager(AIOManager):
    MODE_WRITE = LIO_WRITE
    
    AIO_SIGNAL = signal.SIGIO
-   def __init__(self, sc:signal_.EMSignalCatcher, *args, **kwargs):
-      sc.sighandler_install(self.AIO_SIGNAL, SA_RESTART)
+   def __init__(self, sa:ServiceAggregate, *args, **kwargs):
+      sa.sc.sighandler_install(self.AIO_SIGNAL, SA_RESTART)
       self._listeners = (
-         sc.handle_signals.new_listener(self._handle_signals),
-         sc.handle_overflow.new_listener(self._handle_overflow)
+         sa.sc.handle_signals.new_listener(self._handle_signals),
+         sa.sc.handle_overflow.new_listener(self._handle_overflow)
       )
       AIOManager.__init__(self, *args, **kwargs)
    
@@ -104,10 +104,12 @@ def _test_aiom(aiom_cls, test_count, chunksize):
    from ..fdm import ED_get
    from .signal import EMSignalCatcher, SA_RESTART
    from .._debugging import streamlogger_setup; streamlogger_setup()
+   from ..service_aggregation import ServiceAggregate
    
-   ed = ED_get()()
-   sc = EMSignalCatcher(ed)
-   aio_m = aiom_cls(sc)
+   sa = ServiceAggregate(aio=False)
+   ed = sa.ed
+   sc = sa.sc
+   aio_m = aiom_cls(sa)
    
    fn = b'__gonium_aio.test.tmp'
    
