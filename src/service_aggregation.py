@@ -23,12 +23,12 @@ class ServiceAggregate:
    def __init__(self, ed=None, sc=None, aio=None):
       if (ed is None):
          ed = ED_get()()
+      self.ed = ed
       if (sc is None):
          sc = EMSignalCatcher(ed)
+      self.sc = sc
       if (aio is None):
          aio = EAIOManager(self)
-      self.ed = ed
-      self.sc = sc
       self.aio = aio
 
 # Ugly workaround for cyclical inter-file dependencies
