@@ -112,6 +112,8 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
    sc = sa.sc
    aio_m = aiom_cls(sa)
    
+   baseflags = os.O_RDWR
+   
    fn = b'__gonium_aio.test.tmp'
    
    print('== Setup ==')
@@ -171,7 +173,7 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
          raise Exception("Only got results for {0} of {1} tests (no confirmed failures).".format(ev_count, test_count))
       print('{0} of {1} tests succeeded; no confirmed failures.'.format(ev_count, test_count))
    
-   f = os.open(fn,os.O_RDWR|os.O_CREAT)
+   f = os.open(fn,baseflags|os.O_CREAT)
    
    fail_count = 0
    ev_count = 0
@@ -191,10 +193,10 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
    #ed.set_timer(900, ed.shutdown)
    ed.event_loop()
    os.close(f)
-   f = os.open(fn,os.O_RDWR)
+   f = os.open(fn,baseflags)
    results_check()
    os.close(f)
-   f = os.open(fn,os.O_RDWR)
+   f = os.open(fn,baseflags)
    print('== Checking written data ==')
    aio_phase2()
    print('...no errors detected.')
