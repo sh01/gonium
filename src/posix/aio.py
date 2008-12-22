@@ -88,11 +88,7 @@ class EAIOManager(AIOManager):
    def io(self, req_s:collections.Sequence):
       """Request IO action
       
-      mode: Either LIO_WRITE or LIO_READ
-      buf: buffer to read from / write to
-      filelike: filelike or fd to write to / read from
-      offset: offset on filelike at which to start IO
-      callback: object to call when this is finished
+      req_s: Sequence of EAIORequest objects
       """
       for req in req_s:
          AIOManager.io(self,req)
@@ -183,7 +179,7 @@ def _test_aiom(aiom_cls, test_count, chunksize):
    for i in range(test_count):
       buf = bytearray(chunksize)
       buf[:4] = struct.pack('>L', i)
-      aio_m.io((EAIORequest(LIO_WRITE, buf, f, i*chunksize, callback=aio_wres_process),))
+      aio_m.io((aio_m.REQ_CLS(aio_m.MODE_WRITE, buf, f, i*chunksize, callback=aio_wres_process),))
    
    print('== Write test ==')
    ed.set_timer(50, ed.shutdown)
@@ -199,7 +195,7 @@ def _test_aiom(aiom_cls, test_count, chunksize):
    
    for i in range(test_count):
       buf = bytearray(chunksize)
-      aio_m.io((EAIORequest(LIO_READ, buf, f, i*chunksize, callback=aio_rres_process),))
+      aio_m.io((aio_m.REQ_CLS(aio_m.MODE_READ, buf, f, i*chunksize, callback=aio_rres_process),))
    
    fail_count = 0
    ev_count = 0
