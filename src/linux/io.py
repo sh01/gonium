@@ -74,7 +74,7 @@ class LinuxAIOManager(IOManager):
 
 def _selftest():
    from ..posix.aio import _test_aiom
-   _test_aiom(LinuxAIOManager, 1024, 4096)
+   _test_aiom(LinuxAIOManager)
 
 if (__name__ == '__main__'):
    _selftest()

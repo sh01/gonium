@@ -96,10 +96,10 @@ class EAIOManager(AIOManager):
 
 
 def _selftest():
-   _test_aiom(EAIOManager, 1024, 4096)
+   _test_aiom(EAIOManager)
 
 
-def _test_aiom(aiom_cls, test_count, chunksize):
+def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
    import struct
    from ..fdm import ED_get
    from .signal import EMSignalCatcher, SA_RESTART
@@ -178,10 +178,14 @@ def _test_aiom(aiom_cls, test_count, chunksize):
    sc.handle_overflow.new_listener(ofhandler)
    sc.handle_signals.new_listener(handle_signals)
    
+   write_cmds = deque()
    for i in range(test_count):
       buf = bytearray(chunksize)
       buf[:4] = struct.pack('>L', i)
-      aio_m.io((aio_m.REQ_CLS(aio_m.MODE_WRITE, buf, f, i*chunksize, callback=aio_wres_process),))
+      write_cmds.append(aio_m.REQ_CLS(aio_m.MODE_WRITE, buf, f, i*chunksize, callback=aio_wres_process))
+   
+   aio_m.io(write_cmds)
+   write_cmds.clear()
    
    print('== Write test ==')
    ed.set_timer(50, ed.shutdown)
@@ -195,9 +199,11 @@ def _test_aiom(aiom_cls, test_count, chunksize):
    class AIORS(AIORequest):
       pass
    
+   read_cmds = deque()
    for i in range(test_count):
       buf = bytearray(chunksize)
-      aio_m.io((aio_m.REQ_CLS(aio_m.MODE_READ, buf, f, i*chunksize, callback=aio_rres_process),))
+      read_cmds.append(aio_m.REQ_CLS(aio_m.MODE_READ, buf, f, i*chunksize, callback=aio_rres_process))
+   aio_m.io(read_cmds)
    
    fail_count = 0
    ev_count = 0
