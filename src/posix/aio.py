@@ -40,7 +40,7 @@ class EAIORequest(AIORequest):
       self.callback = callback
    
    def __repr__(self):
-      return ('<AIORequest at {0}, mode {1}, fd {2}:{3}, memory {4}({5} bytes)>'
+      return ('<AIORequest at {0}, mode {1}, fd {2}:{3}, memory {4!a}({5} bytes)>'
               ''.format(id(self), self.mode, self.fd, self.offset, self.buf,
               len(self.buf)))
 
