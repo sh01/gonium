@@ -26,16 +26,16 @@ ext_modules = [
    Extension('gonium.posix._aio', sources = ['src/posix/_aiomodule.c'], libraries=['rt'])
 ]
 
-ext_modules_linux = [
-   Extension('gonium.linux._io', sources = ['src/linux/_iomodule.c'], libraries=['aio'])
-]
+#ext_modules_linux = [
+#   Extension('gonium.linux._io', sources = ['src/linux/_iomodule.c'], libraries=['aio'])
+#]
 
-platform = distutils.util.get_platform()
+#platform = distutils.util.get_platform()
 
-if (platform.startswith('linux-')):
-   ext_modules += ext_modules_linux
-else:
-   print('Platform is {0!a}, skipping linux-specific modules.'.format(platform))
+#if (platform.startswith('linux-')):
+#   ext_modules += ext_modules_linux
+#else:
+#   print('Platform is {0!a}, skipping linux-specific modules.'.format(platform))
 
 
 setup(name='gonium',
