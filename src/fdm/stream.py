@@ -185,7 +185,7 @@ class AsyncDataStream:
       """Increase size of self.inbuf without discarding data"""
       if (self._inbuf_size >= self._inbuf_size_max > 0):
          _log(30, 'Closing {0} because buffer limit {0._inbuf_size_max} has been hit.'.format(self))
-         self.close()
+         raise CloseFD()
       if (new_size is None):
          new_size = self._inbuf_size * 2
       if (self._inbuf_size_max > 0):
@@ -218,8 +218,7 @@ class AsyncDataStream:
                self._outbuf.appendleft(buf)
                break
             if (exc.errno in self._SOCK_ERRNO_FATAL):
-               self.close()
-               return
+               raise CloseFD()
             raise
          
          if ((0 == rv) and (_known_writable)):
