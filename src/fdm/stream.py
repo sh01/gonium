@@ -298,7 +298,7 @@ class AsyncLineStream(AsyncDataStream):
             if (line_end is None):
                line_end = i+len(sep)
                continue
-            line_end = min(fi,i+len(sep))
+            line_end = min(line_end,i+len(sep))
          
          if (line_end is None):
             break
@@ -384,7 +384,7 @@ def _selftest(out=None):
    out.write('Using ED {0}\n'.format(ed))
    out.write('==== AsyncLineStream test ====\n')
    def alsf(ed, stream):
-      return AsyncLineStream(ed, stream, inbufsize_start=1)
+      return AsyncLineStream(ed, stream, inbufsize_start=1, lineseps=(b'\n', b'\x00', b'\n'))
    
    sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stream_factory=alsf)
    sp.stdout_async.process_input = D1()
