@@ -25,7 +25,8 @@ import socket
 import sys
 from collections import deque
 from errno import EAGAIN, ECONNRESET, EPIPE, EINPROGRESS, EINTR, ENOBUFS, \
-   ECONNREFUSED, EHOSTUNREACH, ECONNRESET, ENOMEM, ECONNABORTED, ECONNRESET
+   ECONNREFUSED, EHOSTUNREACH, ECONNRESET, ENOMEM, ECONNABORTED, ECONNRESET, \
+   ETIMEDOUT
 from select import poll, POLLOUT
 from socket import socket as socket_cls, AF_INET, SOCK_STREAM, SOL_SOCKET, \
    SO_ERROR, error as sockerr
@@ -62,7 +63,8 @@ class AsyncDataStream:
       process_close(): process FD closing
    """
    _SOCK_ERRNO_TRANS = {EINTR, ENOBUFS, ENOMEM, EAGAIN}
-   _SOCK_ERRNO_FATAL = {ECONNREFUSED, ECONNRESET, EHOSTUNREACH, ECONNABORTED, EPIPE}
+   _SOCK_ERRNO_FATAL = {ECONNREFUSED, ECONNRESET, EHOSTUNREACH, ECONNABORTED,
+      EPIPE, ETIMEDOUT}
    
    def __init__(self, ed, filelike, *, inbufsize_start:int=1024,
                 inbufsize_max:int=0, size_need:int=0, read_r:bool=True):
@@ -154,7 +156,14 @@ class AsyncDataStream:
       had_pending = bool(self._outbuf)
       self._outbuf.extend(buffers)
       if (flush):
-         self._output_write(had_pending, _known_writable=False)
+         try:
+            self._output_write(had_pending, _known_writable=False)
+         except CloseFD:
+            # Can't let this propagate upwards through this callpath; might
+            # not have been called by an event-readiness handler for this fd.
+            # Make sure we'll be called through that callpath ASAP and can
+            # safely close it then instead.
+            self._fw.write_r()
 
    def discard_inbuf_data(self, count:int=None):
       """Discard <count> bytes of in-buffered data.
@@ -214,8 +223,8 @@ class AsyncDataStream:
          try:
             rv = self._out(buf)
          except sockerr as exc:
+            self._outbuf.appendleft(buf)
             if (exc.errno in self._SOCK_ERRNO_TRANS):
-               self._outbuf.appendleft(buf)
                break
             if (exc.errno in self._SOCK_ERRNO_FATAL):
                raise CloseFD()
