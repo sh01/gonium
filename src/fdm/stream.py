@@ -287,7 +287,7 @@ class AsyncLineStream(AsyncDataStream):
    def _process_input1(self):
       """Input processing stage 1: split data into lines"""
       # Make sure we don't skip over seperators partially read earlier
-      index_l = min(0, self._inbuf_index_l-self._ls_maxlen+1)
+      index_l = max(0, self._inbuf_index_l-self._ls_maxlen+1)
       line_start = 0
       while (True):
          line_end = None
@@ -304,6 +304,7 @@ class AsyncLineStream(AsyncDataStream):
             break
          self._process_input2(memoryview(self._inbuf)[line_start:line_end])
          line_start = index_l = line_end
+      
       if (line_start):
          self.discard_inbuf_data(line_start)
    
