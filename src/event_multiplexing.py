@@ -85,7 +85,7 @@ class EventListener:
       """Compare for equality"""
       return (isinstance(other, EventListener) and
          (self.callback == other.callback) and 
-         (self.multiplexer == other.multiplexer))
+         (self._multiplexer == other._multiplexer))
    
    def __ne__(self, other) -> bool:
       """Compare for inequality"""
