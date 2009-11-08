@@ -91,7 +91,7 @@ class EventListener:
       """Compare for inequality"""
       return (not (self == other))
       
-   def __hash__(self, other) -> int:
+   def __hash__(self) -> int:
       """Compute hash value of instance"""
       return hash((self.callback, self._multiplexer))
     
