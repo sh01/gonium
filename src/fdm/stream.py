@@ -104,13 +104,17 @@ class AsyncDataStream:
    
    @classmethod
    def build_sock_connect(cls, ed, address, connect_callback=None, *,
-      family:int=AF_INET, type_:int=SOCK_STREAM, proto:int=0, **kwargs):
+      family:int=AF_INET, type_:int=SOCK_STREAM, proto:int=0, bind_target=None,
+      **kwargs):
       """Nonblockingly open outgoing SOCK_STREAM/SOCK_SEQPACKET connection."""
       sock = socket_cls(family, type_, proto)
       sock.setblocking(0)
       s_address = address
       if (isinstance(address[0], IPAddressBase)):
          s_address = (str(address[0]), address[1])
+      
+      if not (bind_target is None):
+         sock.bind(bind_target)
       
       try:
          sock.connect(s_address)
