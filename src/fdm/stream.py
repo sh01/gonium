@@ -86,6 +86,7 @@ class AsyncDataStream:
       else:
          raise ValueError("Unable to find send/write method on object {0!a}".format(filelike,))
       
+      self._ed = ed
       self._fw = ed.fd_wrap(self.fl.fileno(), fl=self.fl)
       self._fw.process_readability = self._process_input0
       self._fw.process_writability = self._output_write
@@ -101,6 +102,9 @@ class AsyncDataStream:
       self._inbuf_size_max = inbufsize_max
       self._index_in = 0        # part of buffer filled with current data
       self.output_encoding = None
+      self.connected = True
+      self.ssl_handshake_pending = None
+      self.ssl_callback = None
    
    @classmethod
    def build_sock_connect(cls, ed, address, connect_callback=None, *,
@@ -124,6 +128,8 @@ class AsyncDataStream:
          else:
             raise
       self = cls(ed, sock, read_r=False, **kwargs)
+      self.connected = False
+      
       def connect_process():
          err = sock.getsockopt(SOL_SOCKET, SO_ERROR)
          if (err):
@@ -132,13 +138,20 @@ class AsyncDataStream:
             self._fw.write_u()
             raise CloseFD()
          
-         self._fw.read_r()
-         # Write output, if we have any pending; else, turn writability
-         # notification off
-         self._fw.process_writability = self._output_write
-         self._output_write(_known_writable=False)
+         self.connected = True
+         if (self.ssl_handshake_pending):
+            (ssl_args, ssl_kwargs) = self.ssl_handshake_pending
+            self._do_ssl_handshake(*ssl_args, **ssl_kwargs)
+         else:
+            self._fw.read_r()
+            # Write output, if we have any pending; else, turn writability
+            # notification off
+            self._fw.process_writability = self._output_write
+            self._output_write(_known_writable=False)
+         
          if not (connect_callback is None):
             connect_callback(self)
+      
       self._fw.process_writability = connect_process
       self._fw.write_r()
       return self
@@ -219,6 +232,9 @@ class AsyncDataStream:
    def _output_write(self, _writeregistered:bool=True,
       _known_writable:bool=True):
       """Write output and manage writability notification (un)registering"""
+      if (self._out is None):
+         return
+      
       while (True):
          try:
             buf = self._outbuf.popleft()
@@ -252,6 +268,9 @@ class AsyncDataStream:
          else:
             self._fw.write_r()
    
+   def _in_ssl(self, buf):
+      return self.fl.read(len(buf), buf)
+   
    def _read_data(self):
       """Read and buffer input from wrapped file-like object"""
       try:
@@ -266,6 +285,91 @@ class AsyncDataStream:
          raise CloseFD()
       self._index_in += br
       return br
+   
+   def getpeercert(self, *args, **kwargs):
+      """Return peer certificate for SSL socket."""
+      try:
+         gpc = self.fl.getpeercert
+      except AttributError:
+         return None
+      
+      return gpc(*args, **kwargs)
+   
+   def _do_ssl_handshake(self, *ssl_args, **ssl_kwargs):
+      """Perform SSL handshake, directly. Not for public use; it's racy when
+         called from an IO handler for this stream."""
+      if (not self):
+         # Never mind, then.
+         return
+      import ssl
+      from socket import dup
+      
+      self.ssl_handshake_pending = None
+      self._in = None
+      self._out = None
+      # ssl.SSLSocket dup()s socket's fd and closes the original, if you pass
+      # it a socket. This is kinda hard to deal with for our code; better to
+      # do the dup() on our own.
+      fd_new = dup(self.fl.fileno())
+      self._fw.process_close = lambda: None
+      self._fw.close()
+      try:
+         ssl_sock = ssl.SSLSocket(fileno=fd_new, *ssl_args,
+            do_handshake_on_connect=False, **ssl_kwargs)
+      except:
+         from os import close
+         close(fd_new)
+         raise
+      
+      self.fl = ssl_sock
+      
+      self._fw = self._ed.fd_wrap(ssl_sock.fileno(), fl=ssl_sock)
+      self._fw.read_r()
+      
+      self._fw.process_close = self._process_close
+      self._fw.process_writability = self._ssl_handshake_step
+      self._fw.process_readability = self._ssl_handshake_step
+      self._ssl_handshake_step()
+   
+   def _ssl_handshake_step(self):
+      from ssl import SSLError, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE
+      try:
+         self.fl.do_handshake()
+      except SSLError as exc:
+         if (exc.args[0] == SSL_ERROR_WANT_READ):
+            self._fw.write_u()
+            return
+         if (exc.args[0] == SSL_ERROR_WANT_WRITE):
+            self._fw.write_r()
+            return
+         raise
+      
+      self._in = self._in_ssl
+      self._out = self.fl.write
+      
+      self._fw.process_writability = self._output_write
+      self._fw.process_readability = self._process_input0
+      
+      self.ssl_callback()
+      self.ssl_callback = True
+      
+   def do_ssl_handshake(self, callback, *ssl_args, **ssl_kwargs):
+      """Perform SSL handshake."""
+      # If we don't have the module, better to find that out now.
+      import ssl
+      
+      if not (self.ssl_callback is None):
+         raise Exception('SSL handshake requested previously.')
+      
+      self.ssl_callback = callback
+      if not (self.connected):
+         # We'll let the connect handler do this, then.
+         self._out = None
+         self.ssl_handshake_pending = (ssl_args, ssl_kwargs)
+         return
+      
+      self._ed.set_timer(0, self._do_ssl_handshake, interval_relative=False,
+         args=ssl_args, kwargs=ssl_kwargs)
    
    def _process_input0(self):
       """Input processing stage 0: read and buffer bytes"""
