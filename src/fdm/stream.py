@@ -371,6 +371,30 @@ class AsyncDataStream:
       self._ed.set_timer(0, self._do_ssl_handshake, interval_relative=False,
          args=ssl_args, kwargs=ssl_kwargs)
    
+   def sock_set_keepalive(self, v):
+      """Set keepalive status on wrapped socket."""
+      try:
+         from socket import SOL_SOCKET, SO_KEEPALIVE
+         self.fl.setsockopt(SOL_SOCKET, SO_KEEPALIVE, v)
+      except (ImportError, EnvironmentError):
+         return False
+      return True
+   
+   def sock_set_keepidle(self, idle, intvl, cnt):
+      """Set keepidle status on wrapped socket."""
+      try:
+         from socket import SOL_TCP, TCP_KEEPIDLE
+         self.fl.setsockopt(SOL_TCP, TCP_KEEPIDLE, idle)
+         
+         from socket import TCP_KEEPINTVL
+         self.fl.setsockopt(SOL_TCP, TCP_KEEPINTVL, intvl)
+         
+         from socket import TCP_KEEPCNT
+         self.fl.setsockopt(SOL_TCP, TCP_KEEPCNT, cnt)
+      except (ImportError, EnvironmentError):
+         return False
+      return True
+   
    def _process_input0(self):
       """Input processing stage 0: read and buffer bytes"""
       self._read_data()
