@@ -46,6 +46,8 @@ class _Timer:
       self.parent = parent
       self._persist = persist
       self._align = align
+      self._firing_now = False
+      
       expire_ts = interval
       now = time_()
       if (interval_relative):
@@ -60,14 +62,19 @@ class _Timer:
    
    def cancel(self):
       """Stop timer, cancelling sheduled callback."""
-      self._ed._unregister_timer(self)
-      self._expire_ts = None
+      if (self._firing_now):
+         self._persist = False
+      else:
+         self._ed._unregister_timer(self)
+         self._expire_ts = None
 
    def fire(self):
       """Fire timer, executing callback and (if persistent) bumping expire time"""
+      self._firing_now = True
       try:
          self._callback(*self._cbargs, **self._cbkwargs)
       finally:
+         self._firing_now = False
          if (self._persist):
             if (self._align):
                self._expire_ts = time_() + self._interval
