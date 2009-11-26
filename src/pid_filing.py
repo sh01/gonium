@@ -24,7 +24,7 @@ class PidFile:
       """Open pid-file."""
       if (filename is None):
          argv0 = sys.argv[0]
-         if (isinstance(bn, str)):
+         if (isinstance(argv0, str)):
             # Get rid of silly unicode names
             argv0 = argv0.encode()
          filename = os.path.basename(argv0) + b'.pid'
