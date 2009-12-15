@@ -496,6 +496,11 @@ static void DataTransferDispatcher_dealloc(DataTransferDispatcher *self) {
 
    close(self->spfd[0]);
    close(self->spfd[1]);
+   
+   pthread_mutex_destroy(&self->reqs_mtx);
+   pthread_mutex_destroy(&self->res_mtx);
+   pthread_cond_destroy(&self->reqs_cond);
+   
    Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
