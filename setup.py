@@ -23,7 +23,8 @@ if (sys.version_info[0] <= 2):
 
 ext_modules = [
    Extension('gonium.posix._signal', sources = ['src/posix/_signalmodule.c']),
-   Extension('gonium.posix._aio', sources = ['src/posix/_aiomodule.c'], libraries=['rt'])
+   Extension('gonium.posix._aio', sources = ['src/posix/_aiomodule.c'], libraries=['rt']),
+   Extension('gonium.posix._asyncfd2fd', sources = ['src/posix/_asyncfd2fdmodule.c'], libraries=['pthread'])
 ]
 
 #ext_modules_linux = [
