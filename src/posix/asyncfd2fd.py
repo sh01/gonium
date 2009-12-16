@@ -22,6 +22,14 @@ from ._asyncfd2fd import DataTransferDispatcher as _DataTransferDispatcher, \
 def main():
    from select import select
    
+   print('Error test: thread overkill')
+   try:
+      _DataTransferDispatcher(500000)
+   except:
+      print('...pass.')
+   else:
+      raise Exception('Failed to raise exception.')
+   
    print('DTD init ...')
    dtd = _DataTransferDispatcher(50)
    print('Opening files ...')

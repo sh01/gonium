@@ -415,8 +415,6 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
       
       /* Something went wrong; kill existing worker threads and pipes */
       self->wtcount = i;
-      _dtd_killthreads(self);
-      free(self->wt_data);
       goto fail_p;
    }
    
