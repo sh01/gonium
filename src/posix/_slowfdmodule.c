@@ -32,7 +32,16 @@
 #error This file requires python >= 3.0
 #endif
 
+#define SRC_ISMEM 1
+#define DST_ISMEM 2
+
 static char scratch_buf[10240];
+
+#ifdef __USE_GNU
+  typedef loff_t lt_off;
+#else
+  typedef off_t lt_off;
+#endif
 
 static PyTypeObject DataTransferDispatcherType;
 struct __DataTransferDispatcher;
@@ -47,55 +56,154 @@ typedef struct __t_wt_data {
    #endif
 } t_wt_data;
 
-#ifdef __USE_GNU
-typedef loff_t lt_off;
-void static copy_data(int ifd, int ofd, lt_off *off_in, lt_off *off_out,
-      size_t l, t_wt_data *wt_data) {
-   long e;
-   unsigned int dflags = SPLICE_F_MOVE;
+typedef struct {
+   PyObject_HEAD
+   struct __DataTransferDispatcher *dtd;
+   PyObject *py_src, *py_dst, *opaque;
    
-   while (l) {
-      e = splice(ifd, off_in, wt_data->pfd[1], NULL, l,
-         SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
-      if (e < 0) abort();
-      l -= e;
-      if (l) dflags |= SPLICE_F_MORE;
-      e = splice(wt_data->pfd[0], NULL, ofd, off_out, e, dflags);
-      if (e < 0) abort();
+   int ttype;
+   union {
+      struct {
+         int fd;
+         lt_off off;
+         int use_off;
+      } fl;
+      
+      Py_buffer mem;
+   } src, dst;
+   size_t l;
+} DataTransferRequest;
+
+
+void static inline cd_fd2mem(DataTransferRequest *dtr) {
+   ssize_t e;
+   if (dtr->src.fl.use_off)
+      e = pread(dtr->src.fl.fd, dtr->dst.mem.buf, dtr->l, dtr->src.fl.off);
+   else
+      e = read(dtr->src.fl.fd, dtr->dst.mem.buf, dtr->l);
+   if (e != dtr->l) abort();
+}
+
+void static inline cd_mem2mem(DataTransferRequest *dtr) {
+   memmove(dtr->dst.mem.buf, dtr->src.mem.buf, dtr->l);
+}
+
+#ifdef __USE_GNU
+#include <sys/uio.h>
+#define SET_SRCOFF if (dtr->src.fl.use_off) { src_off = dtr->src.fl.off; p_src_off = &src_off; } else p_src_off = NULL;
+#define SET_DSTOFF if (dtr->dst.fl.use_off) { dst_off = dtr->dst.fl.off; p_dst_off = &dst_off; } else p_dst_off = NULL;
+
+void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
+   long e, f;
+   size_t l;
+   unsigned int dflags = SPLICE_F_MOVE;
+   lt_off src_off, dst_off, *p_src_off, *p_dst_off;
+   struct iovec iv;
+   
+   switch (dtr->ttype) {
+      case 0: /* fd2fd*/
+         SET_SRCOFF;
+         SET_DSTOFF;
+         l = dtr->l;
+         
+         while (l) {
+            e = splice(dtr->src.fl.fd, p_src_off, wt_data->pfd[1], NULL, l,
+               SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
+            if (e <= 0) abort();
+            l -= e;
+            f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off, e,
+               dflags | l ? SPLICE_F_MORE : 0);
+            if (e != f) abort();
+         }
+         break;
+      
+      case SRC_ISMEM: /* mem2fd */
+         SET_DSTOFF;
+         iv.iov_base = dtr->src.mem.buf;
+         iv.iov_len = dtr->l;
+         while (iv.iov_len > 0) {
+            e = vmsplice(wt_data->pfd[1], &iv, 1, 0);
+            if (e <= 0) abort();
+            iv.iov_len -= e;
+            f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off,
+               e, dflags | iv.iov_len ? SPLICE_F_MORE : 0);
+            
+            if (e != f) abort();
+            iv.iov_base = (((char*) iv.iov_base) + e);
+         }
+         break;
+      
+      case DST_ISMEM: /* fd2mem */
+         cd_fd2mem(dtr);
+         break;
+      
+      case DST_ISMEM | SRC_ISMEM: /* mem2mem */
+         cd_mem2mem(dtr);
+         break;
+      
+      default:
+         abort();
    }
 }
 
 #else
-typedef off_t lt_off;
-ssize_t static copy_data(int ifd, int ofd, lt_off *p_off_in, lt_off *p_off_out, size_t l) {
-   ssize_t rv;
-   lt_off off_in = p_off_in ? *p_off_in : 0;
-   lt_off off_out = p_off_out ? *p_off_out : 0;
-   
+#define IOBUFSIZE (1024*1024)
+ssize_t static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
+   ssize_t e,f;
+   size_t l;
    char *buf;
-   buf = malloc(l);
-   if (!buf) abort();
-   rv = pread(ifd, buf, l, off_in);
-   if (rv < 0) {
-      free(buf);
-      return rv;
+   lt_off *src_off, *dst_off;
+   struct iovec iv;
+   
+   switch (dtr->ttype) {
+      case 0: /* fd2fd*/
+         buf = malloc(IOBUFSIZE);
+         if (!buf) abort();
+         l = dtr->l;
+         if (dtr->src.fl.use_off) src_off = dtr->src.fl.off;
+         if (dtr->dst.fl.use_off) dst_off = dtr->dst.fl.off;
+         while (l) {
+            if (dtr->src.fl.use_off) {
+               e = pread(dtr->src.fl.fd, buf, (l > IOBUFSIZE) ? IOBUFSIZE : l, src_off);
+               if (e <= 0) abort();
+               src_off += e;
+            } else {
+               e = read(dtr->src.fl.fd, buf, (l > IOBUFSIZE) ? IOBUFSIZE : l);
+               if (e <= 0) abort();
+            }
+            
+            if (dtr->dst.fl.use_off) {
+               f = pwrite(dtr->dst.fl.fd, buf, e, dst_off);
+               if (f != e) abort();
+               dst_off += f;
+            } else {
+               f = write(dtr->dst.fl.fd, buf, e);
+               if (f != e) abort();
+            }
+            l -= e;
+         }
+         free(buf);
+         break;
+         
+      case SRC_ISMEM: /* mem2fd */
+         e = write(dtr->dst.fl.fd, dtr->src.mem.buf, dtr->l);
+         if (e <= 0) abort();
+         break;
+      
+      case DST_ISMEM: /* fd2mem */
+         cd_fd2mem(dtr);
+         break;
+      
+      case DST_ISMEM | SRC_ISMEM: /* mem2mem */
+         cd_mem2mem(dtr);
+         break;
+      
+      default:
+         abort();
    }
-   rv = pwrite(ofd, buf l, off_out);
-   free(buf);
-   return rv;
 }
 #endif
 
-typedef struct {
-   PyObject_HEAD
-   struct __DataTransferDispatcher *dtd;
-   PyObject *src_file, *dst_file, *opaque;
-   
-   int src_fd, dst_fd;
-   lt_off src_off, dst_off;
-   lt_off *p_src_off, *p_dst_off;
-   size_t l;
-} DataTransferRequest;
 
 typedef struct _t_dtj {
    DataTransferRequest *dtr;
@@ -120,52 +228,67 @@ static DataTransferRequest* DataTransferRequest_new(PyTypeObject *type,
       PyObject *args, PyObject *kwargs) {
    
    DataTransferRequest *self;
-   static char *kwlist[] = {"dtd", "file_in", "file_out", "off_in", "off_out",
+   static char *kwlist[] = {"dtd", "src", "dst", "off_in", "off_out",
       "length", "opaque", NULL};
-   PyObject *fl_in, *fl_out, *poff_in, *poff_out, *opaque;
+   PyObject *py_src, *py_dst, *poff_in, *poff_out, *opaque;
    DataTransferDispatcher *dtd;
    long long off, len;
    
-   
    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O!OOOOLO", kwlist,
       &DataTransferDispatcherType, &dtd,
-      &fl_in, &fl_out, &poff_in, &poff_out, &len, &opaque)) return NULL;
+      &py_src, &py_dst, &poff_in, &poff_out, &len, &opaque)) return NULL;
    
    self = (DataTransferRequest*) type->tp_alloc(type, 0);
    if (!self) return self;
-   self->dtd = NULL;
    
-   if ((self->src_fd = PyObject_AsFileDescriptor(fl_in)) < 0) goto fail;
-   if ((self->dst_fd = PyObject_AsFileDescriptor(fl_out)) < 0) goto fail;
-   
-   /* XXX: Potential for silent overflows here if lt_off is 32bit. Mitigate that somehow? */
-   if (poff_in == Py_None) {
-      self->p_src_off = NULL;
-   } else {
-      if ((off = PyLong_AsLongLong(poff_in)) < 0) goto fail;
-      self->src_off = off;
-      self->p_src_off = &self->src_off;
-   }
-   
-   if (poff_out == Py_None) {
-      self->p_dst_off = NULL;
-   } else {
-      if ((off = PyLong_AsLongLong(poff_out)) < 0) goto fail;
-      self->dst_off = off;
-      self->p_dst_off = &self->dst_off;
-   }
-   
-   self->l = len;
-   
-   Py_INCREF(fl_in);
-   self->src_file = fl_in;
-   Py_INCREF(fl_out);
-   self->dst_file = fl_out;
+   self->ttype = 0;
+   Py_INCREF(py_src);
+   self->py_src = py_src;
+   Py_INCREF(py_dst);
+   self->py_dst = py_dst;
    Py_INCREF(dtd);
    self->dtd = dtd;
    Py_INCREF(opaque);
    self->opaque = opaque;
    
+   /* XXX: Potential for silent overflows here if lt_off is 32bit. Mitigate that somehow? */
+   if ((self->src.fl.fd = PyObject_AsFileDescriptor(py_src)) < 0) {
+      PyErr_Clear();
+      if (PyObject_GetBuffer(py_src, &self->src.mem, PyBUF_SIMPLE)) goto fail;
+      self->ttype |= SRC_ISMEM;
+      if (self->src.mem.len < len) {
+         PyErr_SetString(PyExc_ValueError, "src memory object too short.");
+         goto fail;
+      }
+   } else {
+      if (poff_in == Py_None) {
+         self->src.fl.use_off = 0;
+      } else {
+         if ((off = PyLong_AsLongLong(poff_in)) < 0) goto fail;
+         self->src.fl.off = off;
+         self->src.fl.use_off = 1;
+      }
+   }
+   
+   if ((self->dst.fl.fd = PyObject_AsFileDescriptor(py_dst)) < 0) {
+      PyErr_Clear();
+      if (PyObject_GetBuffer(py_dst, &self->dst.mem, PyBUF_WRITABLE)) goto fail;
+      self->ttype |= DST_ISMEM;
+      if (self->dst.mem.len < len) {
+         PyErr_SetString(PyExc_ValueError, "dst memory object too short.");
+         goto fail;
+      }
+   } else {
+      if (poff_out == Py_None) {
+         self->dst.fl.use_off = 0;
+      } else {
+         if ((off = PyLong_AsLongLong(poff_out)) < 0) goto fail;
+         self->dst.fl.off = off;
+         self->dst.fl.use_off = 1;
+      }
+   }
+   
+   self->l = len;
    return self;
    
    fail:
@@ -175,8 +298,13 @@ static DataTransferRequest* DataTransferRequest_new(PyTypeObject *type,
 
 static void DataTransferRequest_dealloc(DataTransferRequest *self) {
    if (self->dtd) {
-      Py_DECREF(self->src_file);
-      Py_DECREF(self->dst_file);
+      if (self->ttype & SRC_ISMEM)
+         PyBuffer_Release(&self->src.mem);
+      if (self->ttype & DST_ISMEM)
+         PyBuffer_Release(&self->dst.mem);
+      
+      Py_DECREF(self->py_src);
+      Py_DECREF(self->py_dst);
       Py_DECREF(self->opaque);
       Py_DECREF(self->dtd);
    }
@@ -244,7 +372,7 @@ static PyGetSetDef DataTransferRequest_getsetters[] = {
 
 static PyTypeObject DataTransferRequestType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-   "_asyncfd2fd.DataTransferRequest", /* tp_name */
+   "_slowfd.DataTransferRequest", /* tp_name */
    sizeof(DataTransferRequest),     /* tp_basicsize */
    0,                         /* tp_itemsize */
    (destructor)DataTransferRequest_dealloc,/* tp_dealloc */
@@ -287,7 +415,6 @@ static void* thread_work(void *_wt_data) {
    t_wt_data *wt_data = _wt_data;
    t_dtj *job;
    DataTransferDispatcher *dtd = wt_data->dtd;
-   DataTransferRequest *dtr;
    char spfd_tok = '\x00';
    
    pthread_mutex_lock(&dtd->reqs_mtx);
@@ -305,9 +432,7 @@ static void* thread_work(void *_wt_data) {
       dtd->reqcount -= 1;
       pthread_mutex_unlock(&dtd->reqs_mtx);
       
-      dtr = job->dtr;
-      copy_data(dtr->src_fd, dtr->dst_fd, dtr->p_src_off, dtr->p_dst_off,
-         dtr->l, wt_data);
+      copy_data(job->dtr, wt_data);
       
       pthread_mutex_lock(&dtd->res_mtx);
       job->next = dtd->res;
@@ -514,7 +639,7 @@ static PyMethodDef DataTransferDispatcher_methods[] = {
 
 static PyTypeObject DataTransferDispatcherType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-   "_asyncfd2fd.DataTransferDispatcher", /* tp_name */
+   "_slowfd.DataTransferDispatcher", /* tp_name */
    sizeof(DataTransferDispatcher),     /* tp_basicsize */
    0,                         /* tp_itemsize */
    (destructor)DataTransferDispatcher_dealloc, /* tp_dealloc */
@@ -558,17 +683,17 @@ static PyMethodDef module_methods[] = {
 };
 
 
-static struct PyModuleDef _asyncfd2fdmodule = {
+static struct PyModuleDef _module = {
    PyModuleDef_HEAD_INIT,
-   "_asyncfd2fd",
+   "_slowfd",
    NULL,
    -1,
    module_methods
 };
 
 PyMODINIT_FUNC
-PyInit__asyncfd2fd(void) {
-   PyObject *m = PyModule_Create(&_asyncfd2fdmodule);
+PyInit__slowfd(void) {
+   PyObject *m = PyModule_Create(&_module);
    if (!m) return NULL;
    
    /* SigInfo type setup */

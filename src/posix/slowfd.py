@@ -15,43 +15,193 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from ._asyncfd2fd import DataTransferDispatcher as _DataTransferDispatcher, \
+from ._slowfd import DataTransferDispatcher as _DataTransferDispatcher, \
    DataTransferRequest
 
 
-def main():
+def _st_wait_full(dtd, reqcount):
    from select import select
-   
-   print('Error test: thread overkill')
-   try:
-      _DataTransferDispatcher(500000)
-   except:
-      print('...pass.')
-   else:
-      raise Exception('Failed to raise exception.')
-   
-   print('DTD init ...')
-   dtd = _DataTransferDispatcher(50)
-   print('Opening files ...')
-   f1 = open('/dev/urandom', 'rb')
-   f2 = open('/dev/null', 'wb')
-   
-   reqcount = 1000
-   print('Request init ...')
-   for i in range(reqcount):
-      dtr = DataTransferRequest(dtd, f1, f2, None, None, 102400, None)
-      dtr.queue()
-   
    rd_count = 0
-   print('Waiting for request completion ...')
    while (rd_count < reqcount):
       select([dtd],[],[])
       reqs_done = dtd.get_results()
       rd_count += len(reqs_done)
-      print(rd_count)
+
+def _st_hashfile(f, ph=None, log=None):
+   from hashlib import sha1
    
-   print('All done.')
+   f.seek(0)
+   h = sha1()
+   h.update(f.read())
+   rv = h.digest()
+
+   if (ph is None):
+      return rv
+   
+   if (rv == ph):
+      log(20, '...pass.')
+   else:
+      log(50, '...FAIL!')
+      raise Exception()
+   
+   return rv
+ 
+def _main():
+   import sys
+   import random
+   import logging
+   logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s',
+      stream=sys.stderr, level=logging.DEBUG)
+   
+   log = logging.getLogger().log
+   
+   log(20, 'Error test: thread overkill')
+   try:
+      _DataTransferDispatcher(500000)
+   except:
+      log(20, '...pass.')
+   else:
+      raise Exception('Failed to raise exception.')
+   
+   log(20, 'DTD init ...')
+   dtd = _DataTransferDispatcher(50)
+   log(20, 'Opening files ...')
+   furand = open('/dev/urandom', 'rb')
+   f1 = open('__t1.tmp', 'w+b')
+   f2 = open('__t2.tmp', 'w+b')
+   f1.truncate(0)
+   f2.truncate(0)
+   fnull = open('/dev/null', 'wb')
+   
+   reqcount = 1024
+   bs = 102400
+   log(20, 'Copying urandom to tempfile, dst offsets only.')
+   off = 0
+   for i in range(reqcount):
+      dtr = DataTransferRequest(dtd, furand, f1, None, off, bs, None)
+      off += bs
+      dtr.queue()
+   
+   log(20, 'Waiting for request completion ...')
+   _st_wait_full(dtd, reqcount)
+   
+   flen = bs*reqcount
+   
+   if (f1.seek(0,2) != flen):
+      log (50, '...size check: FAIL.')
+      raise Exception()
+   
+   log(20, 'Hashing first copy of data ...')
+   hd1 = _st_hashfile(f1)
+   
+   log(20, 'Testing fd2fd copy; 2 slow fds, by offset, random start order.')
+   off = 0
+   reqs = []
+   for i in range(reqcount):
+      dtr = DataTransferRequest(dtd, f1, f2, off, off, bs, None)
+      off += bs
+      reqs.append(dtr)
+   
+   random.shuffle(reqs)
+   for req in reqs:
+      req.queue()
+   
+   _st_wait_full(dtd, reqcount)
+   f2.flush()
+   log(20, 'Copy done. Verifying data ...')
+   hd2 = _st_hashfile(f2, hd1, log)
+   
+   log(20, 'Doing linear no-offset copy ...')
+   f1.seek(0)
+   f2.seek(0)
+   f2.truncate()
+   for i in range(reqcount):
+      dtr = DataTransferRequest(dtd, f1, f2, None, None, bs, None)
+      dtr.queue()
+      _st_wait_full(dtd, 1)
+   
+   log(20, 'Copy done. Verifying data ...')
+   hd3 = _st_hashfile(f2, hd1, log)
+   
+   f2.seek(0)
+   f2.truncate()
+   
+   log(20, 'Doing offset randomizing copy ...')
+   offs = range(0, bs*reqcount, bs)
+   offs_r = list(offs)
+   random.shuffle(offs_r)
+   offpairs = tuple(zip(offs,offs_r))
+
+   for (off1, off2) in offpairs:
+      dtr = DataTransferRequest(dtd, f1, f2, off1, off2, bs, None)
+      dtr.queue()
+   
+   _st_wait_full(dtd, len(offs))
+   log(20, 'Copy done. Verifying data ...')
+   
+   
+   for (off1, off2) in offpairs:
+      f1.seek(off1)
+      f2.seek(off2)
+      if (f1.read(bs) != f2.read(bs)):
+         log(20, 'FAIL.')
+         raise Exception
+   
+   log(20, '...pass.')
+   log(20, 'Testing fd2mem ...')
+   ba = bytearray(flen)
+   mv = memoryview(ba)
+   
+   for (off1, off2) in offpairs:
+      dtr = DataTransferRequest(dtd, f2, mv[off1:], off2, None, bs, None)
+      dtr.queue()
+   
+   _st_wait_full(dtd, len(offs))
+   
+   f2.seek(0)
+   f2.truncate()
+   
+   log(20, 'Testing mem2fd by offset...')
+   for off1 in offs:
+      dtr = DataTransferRequest(dtd, mv[off1:], f1, None, off1, bs, None)
+      dtr.queue()
+   
+   _st_wait_full(dtd, len(offs))
+   log(20, 'Bidirectional copy done. Verifying data ...')
+   hd4 = _st_hashfile(f1, hd1, log)
+   
+   log(20, 'Testing mem2fd / fd2mem / mem2mem, the former two in no-offset mode ...')
+   f2.seek(0)
+   f2.truncate()
+   f1.seek(0)
+   
+   ba = bytearray(flen)
+   ba2 = bytearray(flen)
+   mv = memoryview(ba)
+   mv2 = memoryview(ba)
+   
+   for off1 in offs:
+      dtr = DataTransferRequest(dtd, f1, mv[off1:], None, None, bs, None)
+      dtr.queue()
+   
+   _st_wait_full(dtd, len(offs))
+   
+   for off1 in offs:
+      dtr = DataTransferRequest(dtd, mv[off1:], mv2[off1:], None, None, bs, None)
+      dtr.queue()
+   
+   _st_wait_full(dtd, len(offs))
+   
+   for off1 in offs:
+      dtr = DataTransferRequest(dtd, mv[off1:], f2, None, None, bs, None)
+      dtr.queue()
+   
+   _st_wait_full(dtd, len(offs))
+   log(20, 'Bidirectional copy done. Verifying data ...')
+   hd5 = _st_hashfile(f1, hd1, log)
+   
+   log(20, 'All done.')
 
 
 if (__name__ == '__main__'):
-   main()
+   _main()
