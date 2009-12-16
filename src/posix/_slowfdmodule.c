@@ -148,12 +148,11 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
 
 #else
 #define IOBUFSIZE (1024*1024)
-ssize_t static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
+void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
    ssize_t e,f;
    size_t l;
    char *buf;
-   lt_off *src_off, *dst_off;
-   struct iovec iv;
+   lt_off src_off, dst_off;
    
    switch (dtr->ttype) {
       case 0: /* fd2fd*/
@@ -186,7 +185,10 @@ ssize_t static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
          break;
          
       case SRC_ISMEM: /* mem2fd */
-         e = write(dtr->dst.fl.fd, dtr->src.mem.buf, dtr->l);
+         if (dtr->dst.fl.use_off)
+            e = pwrite(dtr->dst.fl.fd, dtr->src.mem.buf, dtr->l, dtr->dst.fl.off);
+         else
+            e = write(dtr->dst.fl.fd, dtr->src.mem.buf, dtr->l);
          if (e <= 0) abort();
          break;
       
@@ -532,7 +534,7 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
          
          pthread_join(self->wt_data[i].thread, NULL);
          #else
-         continue
+         continue;
          #endif
       } else
          /* Failed to spawn thread. */
