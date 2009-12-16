@@ -366,11 +366,11 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
    self->wtcount = 0;
    
    if (pthread_cond_init(&self->reqs_cond, NULL)) {
-      PyErr_SetFromErrno(PyExc_SystemError);
+      PyErr_SetFromErrno(PyExc_OSError);
       goto fail;
    }
    if (pthread_mutex_init(&self->reqs_mtx, NULL)) {
-      PyErr_SetFromErrno(PyExc_SystemError);
+      PyErr_SetFromErrno(PyExc_OSError);
       goto fail;
    }
    
@@ -381,13 +381,13 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
    }
    
    if (pipe(self->spfd)) {
-      PyErr_SetFromErrno(PyExc_SystemError);
+      PyErr_SetFromErrno(PyExc_OSError);
       goto fail;
    }
    
    if (fcntl(self->spfd[0], F_SETFL, O_NONBLOCK) ||
        fcntl(self->spfd[1], F_SETFL, O_NONBLOCK)) {
-      PyErr_SetFromErrno(PyExc_SystemError);
+      PyErr_SetFromErrno(PyExc_OSError);
       goto fail_p;
    }
    
@@ -398,7 +398,7 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
          #ifdef __USE_GNU
          if (!pipe(self->wt_data[i].pfd)) continue;
          /* Failed to make pipe */
-         PyErr_SetFromErrno(PyExc_SystemError);
+         PyErr_SetFromErrno(PyExc_OSError);
          
          pthread_mutex_lock(&self->reqs_mtx);
          self->wt_data[i].active = 0;
@@ -411,7 +411,7 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
          #endif
       } else
          /* Failed to spawn thread. */
-         PyErr_SetFromErrno(PyExc_SystemError);
+         PyErr_SetFromErrno(PyExc_OSError);
       
       /* Something went wrong; kill existing worker threads and pipes */
       self->wtcount = i;
