@@ -48,7 +48,7 @@ typedef struct __DataTransferDispatcher DataTransferDispatcher;
 typedef struct __DataTransferRequest DataTransferRequest;
 /* Not intended for dereferencing. Using local scratch buf because it's
    guaranteed to be distinct from all possible real atr pointers. */
-DataTransferRequest *dtr_new = (DataTransferRequest*) &scratch_buf;
+DataTransferRequest *dtr_unqueued = (DataTransferRequest*) &scratch_buf;
 
 typedef struct __t_wt_data {
    struct __DataTransferDispatcher *dtd;
@@ -241,7 +241,7 @@ static DataTransferRequest* DataTransferRequest_new(PyTypeObject *type,
    self = (DataTransferRequest*) type->tp_alloc(type, 0);
    if (!self) return self;
    
-   self->next = dtr_new;
+   self->next = dtr_unqueued;
    self->ttype = 0;
    Py_INCREF(py_src);
    self->py_src = py_src;
@@ -333,7 +333,7 @@ static int DataTransferRequest_setopaque(DataTransferRequest *self,
 }
 
 static PyObject* DataTransferRequest_queue(DataTransferRequest *self) {
-   if (self->next != dtr_new) {
+   if (self->next != dtr_unqueued) {
       PyErr_SetString(PyExc_Exception, "I've already been queued.");
       return NULL;
    }
@@ -567,7 +567,7 @@ static PyObject* DataTransferDispatcher_get_results(DataTransferDispatcher *self
       PyTuple_SET_ITEM(rv, i, (PyObject*) req);
       req_pn = &req->next;
       req = req->next;
-      *req_pn = dtr_new;
+      *req_pn = dtr_unqueued;
    }
    
    if (req) {
