@@ -76,6 +76,8 @@ struct __DataTransferRequest {
       Py_buffer mem;
    } src, dst;
    size_t l;
+   size_t l_rem;
+   int errorcode;
 };
 
 
@@ -85,21 +87,27 @@ void static inline cd_fd2mem(DataTransferRequest *dtr) {
       e = pread(dtr->src.fl.fd, dtr->dst.mem.buf, dtr->l, dtr->src.fl.off);
    else
       e = read(dtr->src.fl.fd, dtr->dst.mem.buf, dtr->l);
-   if (e != dtr->l) abort();
+   
+   if (e <= 0)
+      dtr->errorcode = errno;
+   else
+      dtr->l_rem -= e;
 }
 
 void static inline cd_mem2mem(DataTransferRequest *dtr) {
    memmove(dtr->dst.mem.buf, dtr->src.mem.buf, dtr->l);
+   dtr->l_rem = 0;
 }
 
 #ifdef __USE_GNU
 #include <sys/uio.h>
 #define SET_SRCOFF if (dtr->src.fl.use_off) { src_off = dtr->src.fl.off; p_src_off = &src_off; } else p_src_off = NULL;
 #define SET_DSTOFF if (dtr->dst.fl.use_off) { dst_off = dtr->dst.fl.off; p_dst_off = &dst_off; } else p_dst_off = NULL;
+#define CHECKRV(rv) if (rv <= 0) {if (rv) dtr->errorcode = errno; return;}
+#define CHECKRV2(rv1, rv2) if (rv1 != rv2) {if (rv1 <= 0) dtr->errorcode = errno; else dtr->l_rem -= rv2; return;}
 
 void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
    long e, f;
-   size_t l;
    unsigned int dflags = SPLICE_F_MOVE;
    lt_off src_off, dst_off, *p_src_off, *p_dst_off;
    struct iovec iv;
@@ -108,16 +116,15 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
       case 0: /* fd2fd*/
          SET_SRCOFF;
          SET_DSTOFF;
-         l = dtr->l;
          
-         while (l) {
-            e = splice(dtr->src.fl.fd, p_src_off, wt_data->pfd[1], NULL, l,
-               SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
-            if (e <= 0) abort();
-            l -= e;
+         while (dtr->l_rem) {
+            e = splice(dtr->src.fl.fd, p_src_off, wt_data->pfd[1], NULL,
+               dtr->l_rem, SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
+            CHECKRV(e);
             f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off, e,
-               dflags | l ? SPLICE_F_MORE : 0);
-            if (e != f) abort();
+               dflags | dtr->l_rem ? SPLICE_F_MORE : 0);
+            CHECKRV2(f,e);
+            dtr->l_rem -= f;
          }
          break;
       
@@ -127,12 +134,12 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
          iv.iov_len = dtr->l;
          while (iv.iov_len > 0) {
             e = vmsplice(wt_data->pfd[1], &iv, 1, 0);
-            if (e <= 0) abort();
-            iv.iov_len -= e;
+            CHECKRV(e);
             f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off,
                e, dflags | iv.iov_len ? SPLICE_F_MORE : 0);
-            
-            if (e != f) abort();
+            CHECKRV2(f,e);
+            iv.iov_len -= e;
+            dtr->l_rem = iv.iov_len;
             iv.iov_base = (((char*) iv.iov_base) + e);
          }
          break;
@@ -154,36 +161,35 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
 #define IOBUFSIZE (1024*1024)
 void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
    ssize_t e,f;
-   size_t l;
    char *buf;
    lt_off src_off, dst_off;
    
    switch (dtr->ttype) {
       case 0: /* fd2fd*/
          buf = malloc(IOBUFSIZE);
-         if (!buf) abort();
-         l = dtr->l;
+         if (!buf) {
+            dtr->errorcode = errno;
+            return;
+         }
          if (dtr->src.fl.use_off) src_off = dtr->src.fl.off;
          if (dtr->dst.fl.use_off) dst_off = dtr->dst.fl.off;
-         while (l) {
+         while (dtr->l_rem) {
             if (dtr->src.fl.use_off) {
-               e = pread(dtr->src.fl.fd, buf, (l > IOBUFSIZE) ? IOBUFSIZE : l, src_off);
-               if (e <= 0) abort();
+               e = pread(dtr->src.fl.fd, buf, (dtr->l_rem > IOBUFSIZE) ? IOBUFSIZE : dtr->l_rem, src_off);
                src_off += e;
             } else {
-               e = read(dtr->src.fl.fd, buf, (l > IOBUFSIZE) ? IOBUFSIZE : l);
-               if (e <= 0) abort();
+               e = read(dtr->src.fl.fd, buf, (dtr->l_rem > IOBUFSIZE) ? IOBUFSIZE : dtr->l_rem);
             }
+            CHECKRV(e);
             
             if (dtr->dst.fl.use_off) {
                f = pwrite(dtr->dst.fl.fd, buf, e, dst_off);
-               if (f != e) abort();
                dst_off += f;
             } else {
                f = write(dtr->dst.fl.fd, buf, e);
-               if (f != e) abort();
             }
-            l -= e;
+            CHECKRV2(f,e);
+            dtr->l_rem -= e;
          }
          free(buf);
          break;
@@ -193,7 +199,8 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
             e = pwrite(dtr->dst.fl.fd, dtr->src.mem.buf, dtr->l, dtr->dst.fl.off);
          else
             e = write(dtr->dst.fl.fd, dtr->src.mem.buf, dtr->l);
-         if (e <= 0) abort();
+         CHECKRV(e);
+         dtr->l_rem -= e;
          break;
       
       case DST_ISMEM: /* fd2mem */
@@ -339,7 +346,12 @@ static PyObject* DataTransferRequest_queue(DataTransferRequest *self) {
    }
    
    pthread_mutex_lock(&self->dtd->reqs_mtx);
-   
+   /* POSIX.1-2008 2.3 specifies that none of the specced functions ever set
+      errno to zero. This doesn't necessarily mean that no other functions can
+      use that as an actual error code, so I guess things like splice() could
+      theoretically do it ... but it's probably safe to assume they don't. */
+   self->errorcode = 0;
+   self->l_rem = self->l;
    self->next = NULL;
    Py_INCREF(self);
    
