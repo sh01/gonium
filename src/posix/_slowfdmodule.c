@@ -85,61 +85,75 @@ struct __DataTransferRequest {
 void static inline cd_fd2mem(DataTransferRequest *dtr) {
    ssize_t e;
    if (dtr->src.fl.use_off)
-      e = pread(dtr->src.fl.fd, dtr->dst.mem.buf, dtr->l, dtr->src.fl.off);
+      e = pread(dtr->src.fl.fd, dtr->dst.mem.buf + (dtr->l - dtr->l_rem), dtr->l_rem, dtr->src.fl.off);
    else
-      e = read(dtr->src.fl.fd, dtr->dst.mem.buf, dtr->l);
+      e = read(dtr->src.fl.fd, dtr->dst.mem.buf + (dtr->l - dtr->l_rem), dtr->l_rem);
    
    if (e <= 0)
       dtr->errorcode = errno;
-   else
+   else {
       dtr->l_rem -= e;
+      dtr->src.fl.off += e;
+   }
 }
 
 void static inline cd_mem2mem(DataTransferRequest *dtr) {
-   memmove(dtr->dst.mem.buf, dtr->src.mem.buf, dtr->l);
+   memmove(dtr->dst.mem.buf, dtr->src.mem.buf, dtr->l_rem);
    dtr->l_rem = 0;
 }
 
-#ifdef __USE_GNU
-#include <sys/uio.h>
-#define SET_SRCOFF if (dtr->src.fl.use_off) { src_off = dtr->src.fl.off; p_src_off = &src_off; } else p_src_off = NULL;
-#define SET_DSTOFF if (dtr->dst.fl.use_off) { dst_off = dtr->dst.fl.off; p_dst_off = &dst_off; } else p_dst_off = NULL;
 #define CHECKRV(rv) if (rv <= 0) {if (rv) dtr->errorcode = errno; return;}
-#define CHECKRV2(rv1, rv2) if (rv1 != rv2) {if (rv1 <= 0) dtr->errorcode = errno; else dtr->l_rem -= rv2; return;}
 
+#ifdef __USE_GNU
+
+#include <sys/uio.h>
+#define SET_SRCOFF if (dtr->src.fl.use_off) { p_src_off = &dtr->src.fl.off; } else p_src_off = NULL;
+#define SET_DSTOFF if (dtr->dst.fl.use_off) { p_dst_off = &dtr->dst.fl.off; } else p_dst_off = NULL;
 void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
    long e, f;
    unsigned int dflags = SPLICE_F_MOVE;
-   lt_off src_off, dst_off, *p_src_off, *p_dst_off;
+   lt_off *p_src_off, *p_dst_off;
    struct iovec iv;
    
    switch (dtr->ttype) {
       case 0: /* fd2fd*/
          SET_SRCOFF;
          SET_DSTOFF;
-         
          while (dtr->l_rem) {
             e = splice(dtr->src.fl.fd, p_src_off, wt_data->pfd[1], NULL,
                dtr->l_rem, SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
             CHECKRV(e);
             f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off, e,
                dflags | dtr->l_rem ? SPLICE_F_MORE : 0);
-            CHECKRV2(f,e);
+            if (e != f) {
+               dtr->src.fl.off -= e;
+               if (f <= 0) {
+                  dtr->errorcode = errno;
+               } else
+                  dtr->l_rem += f;
+               return;
+            }
             dtr->l_rem -= f;
          }
          break;
       
       case SRC_ISMEM: /* mem2fd */
          SET_DSTOFF;
-         iv.iov_base = dtr->src.mem.buf;
-         iv.iov_len = dtr->l;
+         iv.iov_base = dtr->src.mem.buf + (dtr->l - dtr->l_rem);
+         iv.iov_len = dtr->l_rem;
          while (iv.iov_len > 0) {
             e = vmsplice(wt_data->pfd[1], &iv, 1, 0);
             CHECKRV(e);
             f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off,
                e, dflags | iv.iov_len ? SPLICE_F_MORE : 0);
-            CHECKRV2(f,e);
-            iv.iov_len -= e;
+            if (e != f) {
+               if (f <= 0)
+                  dtr->errorcode = errno;
+               else
+                  dtr->l_rem -= f;
+               return;
+            }
+            iv.iov_len -= f;
             dtr->l_rem = iv.iov_len;
             iv.iov_base = (((char*) iv.iov_base) + e);
          }
@@ -163,7 +177,6 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
 void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
    ssize_t e,f;
    char *buf;
-   lt_off src_off, dst_off;
    
    switch (dtr->ttype) {
       case 0: /* fd2fd*/
@@ -172,36 +185,43 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
             dtr->errorcode = errno;
             return;
          }
-         if (dtr->src.fl.use_off) src_off = dtr->src.fl.off;
-         if (dtr->dst.fl.use_off) dst_off = dtr->dst.fl.off;
          while (dtr->l_rem) {
-            if (dtr->src.fl.use_off) {
-               e = pread(dtr->src.fl.fd, buf, (dtr->l_rem > IOBUFSIZE) ? IOBUFSIZE : dtr->l_rem, src_off);
-               src_off += e;
-            } else {
+            if (dtr->src.fl.use_off)
+               e = pread(dtr->src.fl.fd, buf, (dtr->l_rem > IOBUFSIZE) ? IOBUFSIZE : dtr->l_rem, dtr->src.fl.off);
+            else
                e = read(dtr->src.fl.fd, buf, (dtr->l_rem > IOBUFSIZE) ? IOBUFSIZE : dtr->l_rem);
-            }
             CHECKRV(e);
             
             if (dtr->dst.fl.use_off) {
-               f = pwrite(dtr->dst.fl.fd, buf, e, dst_off);
-               dst_off += f;
+               f = pwrite(dtr->dst.fl.fd, buf, e, dtr->dst.fl.off);
             } else {
                f = write(dtr->dst.fl.fd, buf, e);
             }
-            CHECKRV2(f,e);
-            dtr->l_rem -= e;
+            if (e != f) {
+               if (f <= 0)
+                  dtr->errorcode = errno;
+               else {
+                  dtr->l_rem -= f;
+                  dtr->dst.fl.off += f;
+                  dtr->src.fl.off += f;
+               }
+               return;
+            }
+            dtr->l_rem -= f;
+            dtr->dst.fl.off += f;
+            dtr->src.fl.off += f;
          }
          free(buf);
          break;
          
       case SRC_ISMEM: /* mem2fd */
          if (dtr->dst.fl.use_off)
-            e = pwrite(dtr->dst.fl.fd, dtr->src.mem.buf, dtr->l, dtr->dst.fl.off);
+            e = pwrite(dtr->dst.fl.fd, dtr->src.mem.buf + (dtr->l - dtr->l_rem), dtr->l_rem, dtr->dst.fl.off);
          else
-            e = write(dtr->dst.fl.fd, dtr->src.mem.buf, dtr->l);
+            e = write(dtr->dst.fl.fd, dtr->src.mem.buf + (dtr->l - dtr->l_rem), dtr->l_rem);
          CHECKRV(e);
          dtr->l_rem -= e;
+         dtr->dst.fl.off += e;
          break;
       
       case DST_ISMEM: /* fd2mem */
@@ -298,6 +318,7 @@ static DataTransferRequest* DataTransferRequest_new(PyTypeObject *type,
    }
    
    self->l = len;
+   self->l_rem = len;
    return self;
    
    fail:
@@ -354,6 +375,10 @@ static int DataTransferRequest_setopaque(DataTransferRequest *self,
 
 static PyObject* DataTransferRequest_queue(DataTransferRequest *self) {
    CHECK_DTR_UQ(self);
+   if (!self->l_rem) {
+      PyErr_SetString(PyExc_ValueError, "This transfer is finished. Nothing left to do.");
+      return NULL;
+   }
    
    pthread_mutex_lock(&self->dtd->reqs_mtx);
    /* POSIX.1-2008 2.3 specifies that none of the specced functions ever set
@@ -361,7 +386,6 @@ static PyObject* DataTransferRequest_queue(DataTransferRequest *self) {
       use that as an actual error code, so I guess things like splice() could
       theoretically do it ... but it's probably safe to assume they don't. */
    self->errorcode = 0;
-   self->l_rem = self->l;
    self->next = NULL;
    Py_INCREF(self);
    
@@ -692,7 +716,7 @@ static PyTypeObject DataTransferDispatcherType = {
    0,                         /* tp_getattro */
    0,                         /* tp_setattro */
    0,                         /* tp_as_buffer */
-   Py_TPFLAGS_DEFAULT,        /* tp_flags */
+   Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,  /* tp_flags */
    "FD2FD data transfer dispatcher.", /* tp_doc */
    0,		              /* tp_traverse */
    0,		              /* tp_clear */

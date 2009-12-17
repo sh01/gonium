@@ -15,8 +15,71 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+# Frontend module for dealing with posix block fds.
+
+import logging
+
 from ._slowfd import DataTransferDispatcher as _DataTransferDispatcher, \
    DataTransferRequest
+
+
+class DataTransferDispatcher(_DataTransferDispatcher):
+   logger = logging.getLogger('DataTransferDispatcher')
+   log = logger.log
+   
+   def __init__(self, *args, **kwargs):
+      super().__init__()
+      self.fw = None
+   
+   def attach_ed(self, ed):
+      """Attach to EventDispatcher by signal pipe."""
+      if not (self.fw is None):
+         raise ValueError('Already attached.')
+      fw = ed.fd_wrap(self.fileno(), self)
+      fw.read_r()
+      fw.process_readability = self.process_results
+   
+   def detach_ed(self):
+      """Detach from EventDispatcher."""
+      if (self.fw is None):
+         raise ValueError('Not currently attached.')
+      self.fw.read_u()
+      self.fw = None
+   
+   def new_req(self, src, dst, cb, length, src_off=None, dst_off=None):
+      """Return new DTR."""
+      return DataTransferRequest(self, src, dst, src_off, dst_off, length, cb)
+   
+   def new_req_fd2mem(self, src, dst, cb, length=None, src_off=None):
+      """Return new fd2mem DTR."""
+      if (length is None):
+         length = len(dst)
+      return DataTransferRequest(self, src, dst, src_off, None, length, cb)
+   
+   def new_req_mem2fd(self, src, dst, cb, length=None, dst_off=None):
+      """Return new mem2fd DTR."""
+      if (length is None):
+         length = len(src)
+      return DataTransferRequest(self, src, dst, src_off, None, length, cb)
+   
+   def new_req_mem2mem(self, src, dst, cb, length=None):
+      """Return new mem2mem DTR."""
+      if (length is None):
+         length = len(src)
+         if (length != len(dst)):
+            raise ValueError('len(src) != len(dst) is invalid without explicit length.')
+      return DataTransferRequest(self, src, dst, None, None, length, cb)
+   
+   def process_results(self):
+      """Process pending results and call callback for each."""
+      results = self.get_results()
+      for dtr in results:
+         cb = dtr.opaque
+         try:
+            cb(result)
+         except Exception as exc:
+            self.log(40, 'Callback {0!a} extracted from DTR {1!a} threw exception:'.format(cb, dtr), exc_info=True)
+         cb.opaque = None
 
 
 # -------------------------------------------------- test cases
@@ -59,14 +122,14 @@ def _main():
    
    log(20, 'Error test: thread overkill')
    try:
-      _DataTransferDispatcher(500000)
+      DataTransferDispatcher(500000)
    except:
       log(20, '...pass.')
    else:
       raise Exception('Failed to raise exception.')
    
    log(20, 'DTD init ...')
-   dtd = _DataTransferDispatcher(50)
+   dtd = DataTransferDispatcher(50)
    log(20, 'Opening files ...')
    furand = open('/dev/urandom', 'rb')
    f1 = open('__t1.tmp', 'w+b')
