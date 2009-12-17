@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Sebastian Hagen
  *  This file is part of gonium.
- * 
+ *
  *  gonium is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation, either version 2 of the License, or
  *  (at your option) any later version.
- * 
+ *
  *  gonium is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- * 
+ *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
@@ -44,8 +44,11 @@ static char scratch_buf[10240];
 #endif
 
 static PyTypeObject DataTransferDispatcherType;
-struct __DataTransferDispatcher;
-struct _t_dtj;
+typedef struct __DataTransferDispatcher DataTransferDispatcher;
+typedef struct __DataTransferRequest DataTransferRequest;
+/* Not intended for dereferencing. Using local scratch buf because it's
+   guaranteed to be distinct from all possible real atr pointers. */
+DataTransferRequest *dtr_new = (DataTransferRequest*) &scratch_buf;
 
 typedef struct __t_wt_data {
    struct __DataTransferDispatcher *dtd;
@@ -56,9 +59,10 @@ typedef struct __t_wt_data {
    #endif
 } t_wt_data;
 
-typedef struct {
+struct __DataTransferRequest {
    PyObject_HEAD
-   struct __DataTransferDispatcher *dtd;
+   DataTransferDispatcher *dtd;
+   DataTransferRequest *next;
    PyObject *py_src, *py_dst, *opaque;
    
    int ttype;
@@ -72,7 +76,7 @@ typedef struct {
       Py_buffer mem;
    } src, dst;
    size_t l;
-} DataTransferRequest;
+};
 
 
 void static inline cd_fd2mem(DataTransferRequest *dtr) {
@@ -206,24 +210,18 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
 }
 #endif
 
-
-typedef struct _t_dtj {
-   DataTransferRequest *dtr;
-   struct _t_dtj *next;
-} t_dtj;
-
-typedef struct __DataTransferDispatcher {
+struct __DataTransferDispatcher {
    PyObject_HEAD
    pthread_mutex_t reqs_mtx, res_mtx;
    pthread_cond_t reqs_cond;
-   t_wt_data *wt_data; /* worker thread data */
-   long wtcount;       /* worker thread count */
-   t_dtj *req, *res;   /* requests, results */
-   size_t reqcount;    /* request count */
-   size_t rescount;    /* result count */
-   t_dtj **req_tp;     /* request tail pointer */
-   int spfd[2];        /* signal pipe */
-} DataTransferDispatcher;
+   t_wt_data *wt_data;             /* worker thread data */
+   long wtcount;                   /* worker thread count */
+   DataTransferRequest *req, *res; /* requests, results */
+   DataTransferRequest **req_tp;   /* request tail pointer */
+   size_t reqcount;                /* request count */
+   size_t rescount;                /* result count */
+   int spfd[2];                    /* signal pipe */
+};
 
 
 static DataTransferRequest* DataTransferRequest_new(PyTypeObject *type,
@@ -243,6 +241,7 @@ static DataTransferRequest* DataTransferRequest_new(PyTypeObject *type,
    self = (DataTransferRequest*) type->tp_alloc(type, 0);
    if (!self) return self;
    
+   self->next = dtr_new;
    self->ttype = 0;
    Py_INCREF(py_src);
    self->py_src = py_src;
@@ -334,22 +333,18 @@ static int DataTransferRequest_setopaque(DataTransferRequest *self,
 }
 
 static PyObject* DataTransferRequest_queue(DataTransferRequest *self) {
-   t_dtj *job;
+   if (self->next != dtr_new) {
+      PyErr_SetString(PyExc_Exception, "I've already been queued.");
+      return NULL;
+   }
    
    pthread_mutex_lock(&self->dtd->reqs_mtx);
    
-   job = malloc(sizeof(t_dtj));
-   if (!job) {
-      pthread_mutex_unlock(&self->dtd->reqs_mtx);
-      return PyErr_NoMemory();
-   }
-   
-   job->dtr = self;
-   job->next = NULL;
+   self->next = NULL;
    Py_INCREF(self);
    
-   *(self->dtd->req_tp) = job;
-   self->dtd->req_tp = &job->next;
+   *(self->dtd->req_tp) = self;
+   self->dtd->req_tp = &self->next;
    self->dtd->reqcount += 1;
    
    pthread_mutex_unlock(&self->dtd->reqs_mtx);
@@ -415,32 +410,32 @@ static PyTypeObject DataTransferRequestType = {
 
 static void* thread_work(void *_wt_data) {
    t_wt_data *wt_data = _wt_data;
-   t_dtj *job;
+   DataTransferRequest *req;
    DataTransferDispatcher *dtd = wt_data->dtd;
    char spfd_tok = '\x00';
    
    pthread_mutex_lock(&dtd->reqs_mtx);
    while (wt_data->active) {
-      job = dtd->req;
-      if (!job) {
+      req = dtd->req;
+      if (!req) {
          pthread_cond_wait(&dtd->reqs_cond, &dtd->reqs_mtx);
          continue;
       }
       
-      if (!(job->next))
+      if (!(req->next))
          dtd->req_tp = &dtd->req;
       
-      dtd->req = job->next;
+      dtd->req = req->next;
       dtd->reqcount -= 1;
       pthread_mutex_unlock(&dtd->reqs_mtx);
       
-      copy_data(job->dtr, wt_data);
+      copy_data(req, wt_data);
       
       pthread_mutex_lock(&dtd->res_mtx);
-      job->next = dtd->res;
-      dtd->res = job;
+      req->next = dtd->res;
+      dtd->res = req;
       dtd->rescount += 1;
-      if (!job->next) write(dtd->spfd[1], &spfd_tok, 1);
+      if (!req->next) write(dtd->spfd[1], &spfd_tok, 1);
       
       pthread_mutex_unlock(&dtd->res_mtx);
       
@@ -561,21 +556,21 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
 static PyObject* DataTransferDispatcher_get_results(DataTransferDispatcher *self) {
    PyObject *rv;
    Py_ssize_t i;
-   t_dtj *job, *job_last;
+   DataTransferRequest *req, **req_pn;
    
    pthread_mutex_lock(&self->res_mtx);
    
    rv = PyTuple_New(self->rescount);
    if (!rv) goto out;
    
-   for (i = self->rescount-1, job=self->res; i > -1; i--) {
-      PyTuple_SET_ITEM(rv, i, (PyObject*) job->dtr);
-      job_last = job;
-      job = job->next;
-      free(job_last);
+   for (i = self->rescount-1, req=self->res; i > -1; i--) {
+      PyTuple_SET_ITEM(rv, i, (PyObject*) req);
+      req_pn = &req->next;
+      req = req->next;
+      *req_pn = dtr_new;
    }
    
-   if (job) {
+   if (req) {
       PyErr_SetString(PyExc_Exception, "Result structure / rescount mismatch. Bailing out.");
       Py_DECREF(rv);
       rv = NULL;
@@ -601,22 +596,21 @@ static PyObject* DataTransferDispatcher_get_request_count(DataTransferDispatcher
 }
 
 static void DataTransferDispatcher_dealloc(DataTransferDispatcher *self) {
-   t_dtj *job, *job_last;
+   DataTransferRequest *req, *req_prev;
    
    _dtd_killthreads(self);
    free(self->wt_data);
    
-   for (job = self->req; job;) {
-      job_last = job;
-      job = job->next;
-      Py_DECREF(job->dtr);
-      free(job_last);
+   for (req = self->req; req;) {
+      req_prev = req;
+      req = req->next;
+      Py_DECREF(req_prev);
    }
-   for (job = self->res; job;) {
-      job_last = job;
-      job = job->next;
-      Py_DECREF(job->dtr);
-      free(job_last);
+
+   for (req = self->res; req;) {
+      req_prev = req;
+      req = req->next;
+      Py_DECREF(req_prev);
    }
 
    close(self->spfd[0]);
