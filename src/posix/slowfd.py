@@ -19,6 +19,7 @@ from ._slowfd import DataTransferDispatcher as _DataTransferDispatcher, \
    DataTransferRequest
 
 
+# -------------------------------------------------- test cases
 def _st_wait_full(dtd, reqcount):
    from select import select
    rd_count = 0
@@ -47,6 +48,7 @@ def _st_hashfile(f, ph=None, log=None):
    return rv
  
 def _main():
+   """Perform module selftests."""
    import sys
    import random
    import logging
@@ -199,6 +201,55 @@ def _main():
    _st_wait_full(dtd, len(offs))
    log(20, 'Bidirectional copy done. Verifying data ...')
    hd5 = _st_hashfile(f1, hd1, log)
+   
+   log(20, 'Testing init sanity check code.')
+   for args in (
+         (mv[:20], mv, None, None, 21, None),
+         (mv, mv[:20], None, None, 21, None),
+         (f2, mv[:20], None, None, 21, None),
+         (mv[:20], f2, None, None, 21, None),
+      ):
+      try:
+         dtr = DataTransferRequest(dtd, *args)
+      except:
+         continue
+      raise Exception('Failed to get exception from {0!a}.'.format(args))
+   log(20, '...pass.')
+   
+   log(20, 'Testing I/O error reporting.')
+   f1.seek(0)
+   f2.seek(0)
+   f2.truncate()
+   
+   badfd = 2**14
+   for args in (
+         (badfd, mv, None, None, 21, None),
+         (mv, badfd, None, None, 21, None),
+         (badfd, f2, None, None, 21, None),
+         (f1, badfd, None, None, 21, None),
+      ):
+      
+      dtr = DataTransferRequest(dtd, *args)
+      dtr.queue()
+      _st_wait_full(dtd, 1)
+      try:
+         rv = dtr.get_errors()
+      except Exception as exc:
+         log(15, 'Correctly got exception {0!a}.'.format(exc))
+         continue
+      
+      raise Exception("DTR with args {0!a} failed to fail.".format(args))
+   
+   for args in (
+         (f2, mv, None, None, 21, None),
+         (f2, f1, None, None, 21, None),
+         (f1, mv, flen-1024**2*5-293, None, 1024**2*10, None),
+      ):
+      dtr = DataTransferRequest(dtd, *args)
+      dtr.queue()
+      _st_wait_full(dtd, 1)
+      if (not dtr.get_missing_byte_count()):
+         raise Exception("DTR with args {0!a} failed to fail.".format(args))
    
    log(20, 'All done.')
 
