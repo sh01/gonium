@@ -407,6 +407,11 @@ static PyObject* DataTransferRequest_get_errors(DataTransferRequest *self) {
    return PyErr_SetFromErrno(PyExc_OSError);
 }
 
+static PyObject* DataTransferRequest_get_errno(DataTransferRequest *self, void *__p) {
+   CHECK_DTR_UQ(self);
+   return PyLong_FromLong(self->errorcode);
+}
+
 static PyObject* DataTransferRequest_get_missing_byte_count(DataTransferRequest *self) {
    CHECK_DTR_UQ(self);
    return PyLong_FromSize_t(self->l_rem);
@@ -426,6 +431,8 @@ static PyMethodDef DataTransferRequest_methods[] = {
 static PyGetSetDef DataTransferRequest_getsetters[] = {
    {"opaque", (getter)DataTransferRequest_getopaque,
     (setter)DataTransferRequest_setopaque, "Opaque value", NULL},
+   {"errno", (getter)DataTransferRequest_get_errno,
+    NULL, "Errno of last I/O attempt.", NULL},
    {NULL}  /* Sentinel */
 };
 
