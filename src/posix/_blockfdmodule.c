@@ -16,7 +16,7 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* POSIX fd2fd interface */
+/* Backend for dealing with POSIX block fds. */
 
 #include "Python.h"
 #include <time.h>
@@ -432,7 +432,7 @@ static PyGetSetDef DataTransferRequest_getsetters[] = {
 
 static PyTypeObject DataTransferRequestType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-   "_slowfd.DataTransferRequest", /* tp_name */
+   "_blockfd.DataTransferRequest", /* tp_name */
    sizeof(DataTransferRequest),     /* tp_basicsize */
    0,                         /* tp_itemsize */
    (destructor)DataTransferRequest_dealloc,/* tp_dealloc */
@@ -698,7 +698,7 @@ static PyMethodDef DataTransferDispatcher_methods[] = {
 
 static PyTypeObject DataTransferDispatcherType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-   "_slowfd.DataTransferDispatcher", /* tp_name */
+   "_blockfd.DataTransferDispatcher", /* tp_name */
    sizeof(DataTransferDispatcher),     /* tp_basicsize */
    0,                         /* tp_itemsize */
    (destructor)DataTransferDispatcher_dealloc, /* tp_dealloc */
@@ -744,14 +744,14 @@ static PyMethodDef module_methods[] = {
 
 static struct PyModuleDef _module = {
    PyModuleDef_HEAD_INIT,
-   "_slowfd",
+   "_blockfd",
    NULL,
    -1,
    module_methods
 };
 
 PyMODINIT_FUNC
-PyInit__slowfd(void) {
+PyInit__blockfd(void) {
    PyObject *m = PyModule_Create(&_module);
    if (!m) return NULL;
    

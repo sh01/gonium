@@ -15,11 +15,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# Frontend module for dealing with posix block fds.
+# Frontend module for dealing with posix block fds. Posix block fds (usually
+# called 'fast fds') are fds on block-like file-likes; i.e. either real files
+# or block devices. read() and write() accesses to fds of this kind have the
+# annoying property of tending to block the calling process.
 
 import logging
 
-from ._slowfd import DataTransferDispatcher as _DataTransferDispatcher, \
+from ._blockfd import DataTransferDispatcher as _DataTransferDispatcher, \
    DataTransferRequest
 
 
@@ -159,7 +162,7 @@ def _main():
    log(20, 'Hashing first copy of data ...')
    hd1 = _st_hashfile(f1)
    
-   log(20, 'Testing fd2fd copy; 2 slow fds, by offset, random start order.')
+   log(20, 'Testing fd2fd copy; 2 block fds, by offset, random start order.')
    off = 0
    reqs = []
    for i in range(reqcount):
