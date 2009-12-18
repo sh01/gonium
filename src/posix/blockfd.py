@@ -25,7 +25,6 @@ import logging
 from ._blockfd import DataTransferDispatcher as _DataTransferDispatcher, \
    DataTransferRequest
 
-
 class DataTransferDispatcher(_DataTransferDispatcher):
    logger = logging.getLogger('DataTransferDispatcher')
    log = logger.log
@@ -79,18 +78,29 @@ class DataTransferDispatcher(_DataTransferDispatcher):
       for dtr in results:
          cb = dtr.opaque
          try:
-            cb(result)
+            cb(dtr)
          except Exception as exc:
             self.log(40, 'Callback {0!a} extracted from DTR {1!a} threw exception:'.format(cb, dtr), exc_info=True)
-         cb.opaque = None
+         if (dtr.get_missing_byte_count() == 0):
+            # _blockfd has no explicit support for gc cycle detection, so we
+            # hack around it here.
+            dtr.opaque = None
 
 
 # -------------------------------------------------- test cases
-class _SelfTester:
-   log = logging.getLogger().log
+class _ModuleSelfTester:
+   log = logging.getLogger('_BlockFDSelfTester').log
    reqcount = 1024
-   bs = 102400
+   bs = 102403
    flen = bs*reqcount
+   
+   @staticmethod
+   def get_rand_offpairs(bs, count):
+      from random import shuffle
+      offs = range(0, bs*count, bs)
+      offs_r = list(offs)
+      shuffle(offs_r)
+      return tuple(zip(offs,offs_r))
 
    def wait_full(self, reqcount):
       from select import select
@@ -100,28 +110,34 @@ class _SelfTester:
          reqs_done = self.dtd.get_results()
          rd_count += len(reqs_done)
 
-   def hashfile(self, f, ph=None):
+   def hash_data(self, data, ph=None):
       from hashlib import sha1
-   
-      f.seek(0)
       h = sha1()
-      h.update(f.read())
+      h.update(data)
+      
       rv = h.digest()
-
       if (ph is None):
          return rv
-   
+      
       if (rv == ph):
          self.log(20, '...pass.')
       else:
          self.log(50, '...FAIL!')
-         raise Exception()
-   
-      return rv
+         raise Exception('Hash mismatch.')
+      
+      return h.digest()
+
+   def hashfile(self, f, ph=None):
+      f.seek(0)
+      return self.hash_data(f.read(), ph)
 
    def run_tests(self):
       self.tests_prep()
       self.rt_backend()
+      self.rt_socks(False)
+      #self.rt_socks(True)
+      
+      self.log(20, 'All done.')
 
    def tests_prep(self):
       self.log(20, 'DTD init ...')
@@ -130,8 +146,10 @@ class _SelfTester:
       furand = open('/dev/urandom', 'rb')
       self.f1 = f1 = open('__t1.tmp', 'w+b')
       self.f2 = f2 = open('__t2.tmp', 'w+b')
-      f1.truncate(0)
-      f2.truncate(0)
+      f1.seek(0)
+      f2.seek(0)
+      f1.truncate()
+      f2.truncate()
    
       self.log(20, 'Copying urandom to tempfile, dst offsets only.')
       off = 0
@@ -149,6 +167,10 @@ class _SelfTester:
    
       self.log(20, 'Hashing first copy of data ...')
       self.hd1 = self.hashfile(f1)
+      
+      from ..fdm.ed import ED_get
+      self.ed = ED_get()()
+      self.dtd.attach_ed(self.ed)
  
    def rt_backend(self):
       import random
@@ -200,18 +222,14 @@ class _SelfTester:
       f2.truncate()
    
       self.log(20, 'Doing offset randomizing copy ...')
-      offs = range(0, bs*reqcount, bs)
-      offs_r = list(offs)
-      random.shuffle(offs_r)
-      offpairs = tuple(zip(offs,offs_r))
+      offpairs = self.get_rand_offpairs(bs, reqcount)
 
       for (off1, off2) in offpairs:
          dtr = DataTransferRequest(dtd, f1, f2, off1, off2, bs, None)
          dtr.queue()
    
-      self.wait_full(len(offs))
+      self.wait_full(len(offpairs))
       self.log(20, 'Copy done. Verifying data ...')
-   
    
       for (off1, off2) in offpairs:
          f1.seek(off1)
@@ -229,12 +247,14 @@ class _SelfTester:
          dtr = DataTransferRequest(dtd, f2, mv[off1:], off2, None, bs, None)
          dtr.queue()
    
-      self.wait_full(len(offs))
+      self.wait_full(len(offpairs))
    
       f2.seek(0)
       f2.truncate()
    
       self.log(20, 'Testing mem2fd by offset...')
+      offs = range(0, bs*reqcount, bs)
+      
       for off1 in offs:
          dtr = DataTransferRequest(dtd, mv[off1:], f1, None, off1, bs, None)
          dtr.queue()
@@ -252,7 +272,7 @@ class _SelfTester:
       ba2 = bytearray(self.flen)
       mv = memoryview(ba)
       mv2 = memoryview(ba)
-   
+      
       for off1 in offs:
          dtr = DataTransferRequest(dtd, f1, mv[off1:], None, None, bs, None)
          dtr.queue()
@@ -322,12 +342,84 @@ class _SelfTester:
          if (not dtr.get_missing_byte_count()):
             raise Exception("DTR with args {0!a} failed to fail.".format(args))
    
-      self.log(20, 'All done.')
+   def rt_socks(self, use_ssl):
+      import random
+      from ..fdm.stream import AsyncDataStream, AsyncSockServer
+      
+      self.log(20, 'Socket test: file2sock: randomized regular / dtded in random order.')
+      self.log(20, 'Setting up sockets ...')
+      s_s = AsyncSockServer(self.ed, ('127.0.0.1',0))
+      saddr = s_s.sock.getsockname()
+      s_in = None
+      
+      ed = self.ed
+      count = self.reqcount
+      bs = self.bs
+      offpairs = self.get_rand_offpairs(bs, count)
+      flen = bs*count
+      f2 = self.f2
+      
+      ba = bytearray(flen)
+      mv = memoryview(ba)
+      i = 0
+      
+      def pi(data):
+         nonlocal i
+         i_diff = len(data)
+         mv[i:i+i_diff] = data
+         i += i_diff
+         s_in.discard_inbuf_data()
+         if (i == flen):
+            ed.shutdown()
+      
+      def cp(sock, addressinfo):
+         nonlocal s_in
+         s_in = AsyncDataStream(ed, sock)
+         if (use_ssl):
+            s_in.do_ssl_handshake(lambda: None, server_side=True)
+         s_in.process_input = pi
+      
+      s_s.connect_process = cp
+      s_out = AsyncDataStream.build_sock_connect(self.ed, saddr)
+      if (use_ssl):
+         s_out.do_ssl_handshake(lambda: None)
+      
+      self.log(20, 'Transferring data ...')
+      
+      for (off1, off2) in offpairs:
+         if (random.randint(0,1)):
+            s_out.send_bytes_from_file(self.dtd, self.f1, off2, bs)
+            continue
+         self.f1.seek(off2)
+         s_out.send_bytes((self.f1.read(bs),))
+      
+      ed.event_loop()
+      
+      s_in.close()
+      s_out.close()
+      s_s.sock.close()
+      
+      ba2 = bytearray(flen)
+      mv2 = memoryview(ba2)
+      for (off1, off2) in offpairs:
+         mv2[off2:off2+bs] = mv[off1:off1+bs]
+      
+      #ba = None
+      #mv = None
+      
+      self.log(20, 'Done. Verifying equality ...')
+      self.f1.seek(0)
+      for (off1, off2) in offpairs:
+         d1 = mv2[off1:off1+bs]
+         d2 = self.f1.read(bs)
+         print (d1 == d2, off1)
+      
+      hd2 = self.hash_data(mv2, self.hd1)
 
 
 if (__name__ == '__main__'):
    import sys
    logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s',
       stream=sys.stderr, level=logging.DEBUG)
-   st = _SelfTester()
+   st = _ModuleSelfTester()
    st.run_tests()
