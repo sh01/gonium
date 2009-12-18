@@ -383,6 +383,7 @@ class AsyncDataStream:
       except:
          raise
       
+      ssl_sock.setblocking(0)
       self.fl = ssl_sock
       
       self._fw = self._ed.fd_wrap(ssl_sock.fileno(), fl=ssl_sock)
