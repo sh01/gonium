@@ -251,12 +251,27 @@ class _FDWrap:
       """Unregister fd for writng."""
       self._ed._fdcb_write_u(self.fd)
 
-   def close(self):
-      """Close this fd."""
+   def unregister(self):
+      """Unregister completely from ED."""
       self.read_u()
       self.write_u()
       if (self._ed._fdwl[self.fd] is self):
          self._ed._fdwl[self.fd] = None
+
+   def close_by_gc(self):
+      """Prepare for closing fd, but leave the actual closing up to the GC."""
+      self.unregister()
+      try:
+         self.process_close()
+      except Exception:
+         _log(40, 'Error in fd-close handler:', exc_info=True)
+
+      self._fl = False
+      self._ed = None
+
+   def close(self):
+      """Close this fd."""
+      self.unregister()
       
       if not (self._fl is None):
          self._fl.close()

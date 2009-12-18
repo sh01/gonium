@@ -62,7 +62,7 @@ class AsyncDataStream:
       process_input(data): process newly buffered input
       process_close(): process FD closing
    """
-   _SOCK_ERRNO_TRANS = {EINTR, ENOBUFS, ENOMEM, EAGAIN}
+   _SOCK_ERRNO_TRANS = {0, EINTR, ENOBUFS, ENOMEM, EAGAIN}
    _SOCK_ERRNO_FATAL = {ECONNREFUSED, ECONNRESET, EHOSTUNREACH, ECONNABORTED,
       EPIPE, ETIMEDOUT}
    
@@ -182,6 +182,47 @@ class AsyncDataStream:
             # safely close it then instead.
             self._fw.write_r()
 
+   def _bfs_process(self, dtr):
+      """Process possibly partial block send."""
+      if (self._outbuf is None):
+         return
+      
+      self._unblock_output()
+      if (dtr.get_missing_byte_count() != 0):
+         self._outbuf.appendleft(dtr)
+      
+      if (self._outbuf):
+         self._fw.write_r()
+
+   def send_bytes_from_file(self, dtd, file, off, length):
+      """Get data from specified file-like using specified dtd, and send it.
+         """
+      
+      had_pending = bool(self._outbuf)
+      if (self.ssl_callback):
+         # Can't use direct fd2fd copy here, since we need to push the data
+         # through the crypto stack before sending.
+         mv = bytearray(length)
+         def cb(dtr):
+            if (self._outbuf is None):
+               return
+            
+            self._unblock_output()
+            if (dtr.get_missing_byte_count() == 0):
+               self._outbuf.appendleft(mv)
+            else:
+               self._outbuf.appendleft(dtr)
+            self._fw.write_r()
+         dtr = dtd.new_req_fd2mem(file, mv, cb, length)
+      else:
+         dtr = dtd.new_req(file, self.fl, self._bfs_process, length, off, None)
+      
+      dtr.errno = EAGAIN
+      
+      self._outbuf.append(dtr)
+      del(dtr)
+      self._output_write(had_pending, _known_writable=False)
+
    def discard_inbuf_data(self, count:int=None):
       """Discard <count> bytes of in-buffered data.
       
@@ -197,7 +238,9 @@ class AsyncDataStream:
    def close(self):
       """Close wrapped fd, if currently open"""
       if (self._fw):
-         self._fw.close()
+         self._fw.close_by_gc()
+         self._out = None
+         self._in = None
 
    def process_close(self):
       """Process FD closing; intended to be overwritten by instance user"""
@@ -229,6 +272,12 @@ class AsyncDataStream:
       self._outbuf = None
       self.process_close()
 
+   def _block_output(self):
+      self._outbuf.appendleft(None)
+   
+   def _unblock_output(self):
+      self._outbuf.popleft()
+
    def _output_write(self, _writeregistered:bool=True,
       _known_writable:bool=True):
       """Write output and manage writability notification (un)registering"""
@@ -240,6 +289,25 @@ class AsyncDataStream:
             buf = self._outbuf.popleft()
          except IndexError:
             break
+         
+         if (buf is None):
+            # We're supposed to wait for some external event before sending
+            # any more data, so let's do that.
+            self._block_output()
+            if (_writeregistered):
+               self._fw.write_u()
+            return
+         
+         if (hasattr(buf, 'queue')):
+            # It's actually a DTR object with an unfinished transfer.
+            if (buf.errno in self._SOCK_ERRNO_TRANS):
+               buf.queue()
+               self._block_output()
+               continue
+            if (buf.errno in self._SOCK_ERRNO_FATAL):
+               raise CloseFD()
+            buf.get_errors()
+         
          try:
             rv = self._out(buf)
          except sockerr as exc:
@@ -255,10 +323,6 @@ class AsyncDataStream:
             raise CloseFD()
          
          if (rv < len(buf)):
-            # This might happen if send is interrupted by a signal, but that
-            # should be rare, and is probably not worth optimizing for.
-            # For performance: don't copy data; instead create a memoryview
-            # skipping written data
             self._outbuf.appendleft(memoryview(buf)[rv:])
             break
       
@@ -317,8 +381,6 @@ class AsyncDataStream:
          ssl_sock = ssl.SSLSocket(fileno=fd_new, *ssl_args,
             do_handshake_on_connect=False, **ssl_kwargs)
       except:
-         from os import close
-         close(fd_new)
          raise
       
       self.fl = ssl_sock
@@ -350,6 +412,10 @@ class AsyncDataStream:
       self._fw.process_writability = self._output_write
       self._fw.process_readability = self._process_input0
       
+      self._unblock_output()
+      if (self._outbuf):
+         self._fw.write_r()
+      
       self.ssl_callback()
       self.ssl_callback = True
       
@@ -368,6 +434,7 @@ class AsyncDataStream:
          self.ssl_handshake_pending = (ssl_args, ssl_kwargs)
          return
       
+      self._block_output()
       self._ed.set_timer(0, self._do_ssl_handshake, interval_relative=False,
          args=ssl_args, kwargs=ssl_kwargs)
    
