@@ -427,7 +427,7 @@ static int DataTransferRequest_set_errno(DataTransferRequest *self,
    if ((lval == -1) && (PyErr_Occurred())) return -1;
    ival = lval;
    if (ival != lval) {
-      PyErr_SetString(PyExc_Exception, "Argument too big.");
+      PyErr_SetString(PyExc_OverflowError, "Argument too big.");
       return -1;
    }
    
