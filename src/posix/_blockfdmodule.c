@@ -111,7 +111,7 @@ void static inline cd_mem2mem(DataTransferRequest *dtr) {
 #define SET_DSTOFF if (dtr->dst.fl.use_off) { p_dst_off = &dtr->dst.fl.off; } else p_dst_off = NULL;
 void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
    long e, f;
-   unsigned int dflags = SPLICE_F_MOVE;
+   ssize_t g;
    lt_off *p_src_off, *p_dst_off;
    struct iovec iv;
    
@@ -124,13 +124,21 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
                dtr->l_rem, SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
             CHECKRV(e);
             f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off, e,
-               dflags | dtr->l_rem ? SPLICE_F_MORE : 0);
+               SPLICE_F_MOVE | dtr->l_rem ? SPLICE_F_MORE : 0);
+            
             if (e != f) {
                dtr->src.fl.off -= e;
                if (f <= 0) {
                   dtr->errorcode = errno;
-               } else
-                  dtr->l_rem += f;
+               } else {
+                  dtr->src.fl.off += f;
+                  dtr->l_rem -= f;
+               }
+               
+               g = 1;
+               while (g > 0) {
+                  g = read(wt_data->pfd[0], scratch_buf, sizeof(scratch_buf));
+               }
                return;
             }
             dtr->l_rem -= f;
@@ -145,7 +153,7 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
             e = vmsplice(wt_data->pfd[1], &iv, 1, 0);
             CHECKRV(e);
             f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off,
-               e, dflags | iv.iov_len ? SPLICE_F_MORE : 0);
+               e, SPLICE_F_MOVE | iv.iov_len ? SPLICE_F_MORE : 0);
             if (e != f) {
                if (f <= 0)
                   dtr->errorcode = errno;
@@ -190,7 +198,12 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
                e = pread(dtr->src.fl.fd, buf, (dtr->l_rem > IOBUFSIZE) ? IOBUFSIZE : dtr->l_rem, dtr->src.fl.off);
             else
                e = read(dtr->src.fl.fd, buf, (dtr->l_rem > IOBUFSIZE) ? IOBUFSIZE : dtr->l_rem);
-            CHECKRV(e);
+            
+            if (e <= 0) {
+               if (e) dtr->errorcode = errno;
+               free(buf);
+               return;
+            }
             
             if (dtr->dst.fl.use_off) {
                f = pwrite(dtr->dst.fl.fd, buf, e, dtr->dst.fl.off);
@@ -205,6 +218,7 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
                   dtr->dst.fl.off += f;
                   dtr->src.fl.off += f;
                }
+               free(buf);
                return;
             }
             dtr->l_rem -= f;
@@ -611,7 +625,8 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
       self->wt_data[i].active = 1;
       if (!pthread_create(&self->wt_data[i].thread, NULL, thread_work, &self->wt_data[i])) {
          #ifdef __USE_GNU
-         if (!pipe(self->wt_data[i].pfd)) continue;
+         if (!pipe(self->wt_data[i].pfd) &&
+             !fcntl(self->wt_data[i].pfd[0], F_SETFL, O_NONBLOCK)) continue;
          /* Failed to make pipe */
          PyErr_SetFromErrno(PyExc_OSError);
          
