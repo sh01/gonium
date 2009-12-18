@@ -371,10 +371,10 @@ static int DataTransferRequest_setopaque(DataTransferRequest *self,
    And these accesses are extremely common operations. Which is why I'm not
    putting in a mutex to make sure this is 100% correct, even though that
    goes against my professional paranoia. */
-#define CHECK_DTR_UQ(dtr) if (dtr->next != dtr_unqueued) { PyErr_SetString(PyExc_Exception, "I'm already queued ATM; you really shouldn't be calling this method unless you know that I'm not. You've just subjected yourself to undefined behaviour, but you're in luck: I'm not going to do anything more sinister than throw an exception with an unusually long error description. This time."); return NULL; }
+#define CHECK_DTR_UQ(dtr, erv) if (dtr->next != dtr_unqueued) { PyErr_SetString(PyExc_Exception, "I'm already queued ATM; you really shouldn't be calling this method unless you know that I'm not. You've just subjected yourself to undefined behaviour, but you're in luck: I'm not going to do anything more sinister than throw an exception with an unusually long error description. This time."); return erv; }
 
 static PyObject* DataTransferRequest_queue(DataTransferRequest *self) {
-   CHECK_DTR_UQ(self);
+   CHECK_DTR_UQ(self, NULL);
    if (!self->l_rem) {
       PyErr_SetString(PyExc_ValueError, "This transfer is finished. Nothing left to do.");
       return NULL;
@@ -400,7 +400,7 @@ static PyObject* DataTransferRequest_queue(DataTransferRequest *self) {
 }
 
 static PyObject* DataTransferRequest_get_errors(DataTransferRequest *self) {
-   CHECK_DTR_UQ(self);
+   CHECK_DTR_UQ(self, NULL);
    
    if (!self->errorcode) Py_RETURN_NONE;
    errno = self->errorcode;
@@ -408,12 +408,35 @@ static PyObject* DataTransferRequest_get_errors(DataTransferRequest *self) {
 }
 
 static PyObject* DataTransferRequest_get_errno(DataTransferRequest *self, void *__p) {
-   CHECK_DTR_UQ(self);
+   CHECK_DTR_UQ(self, NULL);
    return PyLong_FromLong(self->errorcode);
 }
 
+static int DataTransferRequest_set_errno(DataTransferRequest *self,
+      PyObject *val, void *__p) {
+   
+   long lval;
+   int ival;
+   CHECK_DTR_UQ(self, -1);
+   if (!val) {
+      PyErr_SetString(PyExc_Exception, "This arg is not deletable.");
+      return -1;
+   }
+   
+   lval = PyLong_AsLong(val);
+   if ((lval == -1) && (PyErr_Occurred())) return -1;
+   ival = lval;
+   if (ival != lval) {
+      PyErr_SetString(PyExc_Exception, "Argument too big.");
+      return -1;
+   }
+   
+   self->errorcode = ival;
+   return 0;
+}
+
 static PyObject* DataTransferRequest_get_missing_byte_count(DataTransferRequest *self) {
-   CHECK_DTR_UQ(self);
+   CHECK_DTR_UQ(self, NULL);
    return PyLong_FromSize_t(self->l_rem);
 }
 
@@ -432,7 +455,7 @@ static PyGetSetDef DataTransferRequest_getsetters[] = {
    {"opaque", (getter)DataTransferRequest_getopaque,
     (setter)DataTransferRequest_setopaque, "Opaque value", NULL},
    {"errno", (getter)DataTransferRequest_get_errno,
-    NULL, "Errno of last I/O attempt.", NULL},
+    (setter)DataTransferRequest_set_errno, "Errno of last I/O attempt. Undefined behaviour will result if accessed while this DTR is queued.", NULL},
    {NULL}  /* Sentinel */
 };
 
