@@ -220,8 +220,6 @@ class AsyncDataStream:
       dtr.errno = EAGAIN
       
       self._outbuf.append(dtr)
-      del(dtr)
-      self._output_write(had_pending, _known_writable=False)
 
    def discard_inbuf_data(self, count:int=None):
       """Discard <count> bytes of in-buffered data.
