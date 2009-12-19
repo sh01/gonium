@@ -133,6 +133,7 @@ class _ModuleSelfTester:
 
    def run_tests(self):
       self.tests_prep()
+      self.rt_socks(False)
       self.rt_backend()
       self.rt_backend()
       self.rt_socks(False)
@@ -345,13 +346,16 @@ class _ModuleSelfTester:
    
    def rt_socks(self, use_ssl):
       import random
+      from collections import deque
       from ..fdm.stream import AsyncDataStream, AsyncSockServer
       
       self.log(20, 'Socket test: file2sock: randomized regular / dtded in random order.')
       self.log(20, 'Setting up sockets ...')
       s_s = AsyncSockServer(self.ed, ('127.0.0.1',0))
       saddr = s_s.sock.getsockname()
-      s_in = None
+      s_c1 = None
+      s_c2 = None
+      s_c1_fw = None
       
       ed = self.ed
       count = self.reqcount
@@ -363,6 +367,7 @@ class _ModuleSelfTester:
       ba = bytearray(flen)
       mv = memoryview(ba)
       i = 0
+      s2s_transfers = deque()
       
       def pi(data):
          nonlocal i
@@ -373,26 +378,63 @@ class _ModuleSelfTester:
          if (i == flen):
             ed.shutdown()
       
+      def s2s_copy_fp(dtr):
+         nonlocal s_c2
+         if (dtr.get_missing_byte_count() == 0):
+            s2s_transfers.popleft()
+            if (not s2s_transfers):
+               s_c2.close()
+               s_c2 = None
+         
+         s_c1_fw.read_r()
+      
+      def s2s_copy():
+         if not (s2s_transfers):
+            if (s_c1.recv(1024) == b''):
+               s_c1_fw.close()
+               return
+            
+            raise Exception('Got too much data to copy.')
+         s2s_transfers[0].queue()
+         s_c1_fw.read_u()
+      
       def cp(sock, addressinfo):
-         nonlocal s_in
-         s_in = AsyncDataStream(ed, sock)
-         if (use_ssl):
-            s_in.do_ssl_handshake(lambda: None, server_side=True)
-         s_in.process_input = pi
+         nonlocal s_c1, s_c2, s_c1_fw
+         if (s_c1 is None):
+            s_c1 = sock
+            s_c1.setblocking(0)
+            ed.shutdown()
+            return
+         s_c2 = sock
+         s_c1_fw = ed.fd_wrap(s_c1.fileno(), s_c1)
+         s_c1_fw.process_readability = s2s_copy
+         s_c1_fw.read_r()
+         ed.shutdown()
+         
       
       s_s.connect_process = cp
       s_out = AsyncDataStream.build_sock_connect(self.ed, saddr)
       if (use_ssl):
          s_out.do_ssl_handshake(lambda: None)
       
+      ed.event_loop()
+      s_in = AsyncDataStream.build_sock_connect(self.ed, saddr)
+      s_in.process_input = pi
+      if (use_ssl):
+         s_in.do_ssl_handshake(lambda: None)
+      
+      ed.event_loop()
+      
       self.log(20, 'Transferring data ...')
       
       for (off1, off2) in offpairs:
          if (random.randint(0,1)):
             s_out.send_bytes_from_file(self.dtd, self.f1, off2, bs)
-            continue
-         self.f1.seek(off2)
-         s_out.send_bytes((self.f1.read(bs),))
+         else:
+            self.f1.seek(off2)
+            s_out.send_bytes((self.f1.read(bs),))
+         
+         s2s_transfers.append(self.dtd.new_req(s_c1, s_c2, s2s_copy_fp, bs, None, None))
       
       ed.event_loop()
       
