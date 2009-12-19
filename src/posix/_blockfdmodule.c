@@ -66,6 +66,9 @@ struct __DataTransferRequest {
    DataTransferRequest *next;
    PyObject *py_src, *py_dst, *opaque;
    
+   size_t tmpbuf_len, tmpbuf_off;
+   char *tmpbuf;
+   
    int ttype;
    union {
       struct {
@@ -81,6 +84,8 @@ struct __DataTransferRequest {
    int errorcode;
 };
 
+
+#define CHECKRV(rv) if (rv <= 0) {if (rv) dtr->errorcode = errno; return;}
 
 void static inline cd_fd2mem(DataTransferRequest *dtr) {
    ssize_t e;
@@ -102,7 +107,46 @@ void static inline cd_mem2mem(DataTransferRequest *dtr) {
    dtr->l_rem = 0;
 }
 
-#define CHECKRV(rv) if (rv <= 0) {if (rv) dtr->errorcode = errno; return;}
+void static inline cd_mem2fd(DataTransferRequest *dtr) {
+   ssize_t e;
+   if (dtr->dst.fl.use_off)
+      e = pwrite(dtr->dst.fl.fd, dtr->src.mem.buf + (dtr->l - dtr->l_rem), dtr->l_rem, dtr->dst.fl.off);
+   else
+      e = write(dtr->dst.fl.fd, dtr->src.mem.buf + (dtr->l - dtr->l_rem), dtr->l_rem);
+   CHECKRV(e);
+   dtr->l_rem -= e;
+   dtr->dst.fl.off += e;
+}
+
+int static inline dtr_clear_tmpbuf(DataTransferRequest *dtr) {
+   ssize_t e;
+   if (!dtr->tmpbuf) return 0;
+   
+   errno = 0;
+   if (dtr->dst.fl.use_off)
+      e = pwrite(dtr->dst.fl.fd, dtr->tmpbuf + dtr->tmpbuf_off,
+         dtr->tmpbuf_len, dtr->dst.fl.off);
+   else
+      e = write(dtr->dst.fl.fd, dtr->tmpbuf + dtr->tmpbuf_off, dtr->tmpbuf_len);
+   
+   if (e <= 0) {
+      dtr->errorcode = errno;
+      return 1;
+   }
+   
+   dtr->tmpbuf_off += e;
+   dtr->tmpbuf_len -= e;
+   dtr->l_rem -= e;
+   dtr->dst.fl.off += e;
+   
+   if (!dtr->tmpbuf_len) {
+      free(dtr->tmpbuf);
+      dtr->tmpbuf = NULL;
+      return 0;
+   }
+   
+   return 1;
+}
 
 #ifdef __USE_GNU
 
@@ -111,34 +155,53 @@ void static inline cd_mem2mem(DataTransferRequest *dtr) {
 #define SET_DSTOFF if (dtr->dst.fl.use_off) { p_dst_off = &dtr->dst.fl.off; } else p_dst_off = NULL;
 void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
    long e, f;
-   ssize_t g;
    lt_off *p_src_off, *p_dst_off;
-   struct iovec iv;
    
    switch (dtr->ttype) {
       case 0: /* fd2fd*/
          SET_SRCOFF;
          SET_DSTOFF;
+         
+         if (dtr_clear_tmpbuf(dtr)) return;
+         
          while (dtr->l_rem) {
+            errno = 0;
             e = splice(dtr->src.fl.fd, p_src_off, wt_data->pfd[1], NULL,
                dtr->l_rem, SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
             CHECKRV(e);
             f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off, e,
-               SPLICE_F_MOVE | dtr->l_rem ? SPLICE_F_MORE : 0);
+               SPLICE_F_MOVE | (dtr->l_rem - e) ? SPLICE_F_MORE : 0);
             
             if (e != f) {
-               dtr->src.fl.off -= e;
+               /* This could be fatal, or not ... maybe the dst fd is just
+                  in nonblock mode. */
                if (f <= 0) {
                   dtr->errorcode = errno;
                } else {
-                  dtr->src.fl.off += f;
                   dtr->l_rem -= f;
+                  e -= f;
                }
                
-               g = 1;
-               while (g > 0) {
-                  g = read(wt_data->pfd[0], scratch_buf, sizeof(scratch_buf));
+               dtr->tmpbuf = malloc(e);
+               if (!dtr->tmpbuf) {
+                  /* Well, things are *really* messed up now. No sane way to
+                     recover from this without losing data. */
+                  dtr->errorcode = errno;
+                  while(read(wt_data->pfd[0], scratch_buf, sizeof(scratch_buf)) > 0);
+                  return;
                }
+               
+               f = read(wt_data->pfd[0], dtr->tmpbuf, e);
+               if (e != f) {
+                  free(dtr->tmpbuf);
+                  dtr->tmpbuf = NULL;
+                  if (!errno) errno = -1;
+                  dtr->errorcode = errno;
+               } else {
+                  dtr->tmpbuf_len = e;
+                  dtr->tmpbuf_off = 0;
+               }
+               
                return;
             }
             dtr->l_rem -= f;
@@ -146,25 +209,7 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
          break;
       
       case SRC_ISMEM: /* mem2fd */
-         SET_DSTOFF;
-         iv.iov_base = dtr->src.mem.buf + (dtr->l - dtr->l_rem);
-         iv.iov_len = dtr->l_rem;
-         while (iv.iov_len > 0) {
-            e = vmsplice(wt_data->pfd[1], &iv, 1, 0);
-            CHECKRV(e);
-            f = splice(wt_data->pfd[0], NULL, dtr->dst.fl.fd, p_dst_off,
-               e, SPLICE_F_MOVE | iv.iov_len ? SPLICE_F_MORE : 0);
-            if (e != f) {
-               if (f <= 0)
-                  dtr->errorcode = errno;
-               else
-                  dtr->l_rem -= f;
-               return;
-            }
-            iv.iov_len -= f;
-            dtr->l_rem = iv.iov_len;
-            iv.iov_base = (((char*) iv.iov_base) + e);
-         }
+         cd_mem2fd(dtr);
          break;
       
       case DST_ISMEM: /* fd2mem */
@@ -188,6 +233,8 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
    
    switch (dtr->ttype) {
       case 0: /* fd2fd*/
+         if (dtr_clear_tmpbuf(dtr)) return;
+         
          buf = malloc(IOBUFSIZE);
          if (!buf) {
             dtr->errorcode = errno;
@@ -205,37 +252,37 @@ void static copy_data(DataTransferRequest *dtr, t_wt_data *wt_data) {
                return;
             }
             
+            dtr->src.fl.off += e;
+            
             if (dtr->dst.fl.use_off) {
                f = pwrite(dtr->dst.fl.fd, buf, e, dtr->dst.fl.off);
             } else {
                f = write(dtr->dst.fl.fd, buf, e);
             }
             if (e != f) {
-               if (f <= 0)
+               dtr->tmpbuf = buf;
+               dtr->tmpbuf_len = e;
+               
+               if (f <= 0) {
                   dtr->errorcode = errno;
-               else {
+                  dtr->tmpbuf_off = 0;
+               } else {
                   dtr->l_rem -= f;
                   dtr->dst.fl.off += f;
-                  dtr->src.fl.off += f;
+                  dtr->tmpbuf_off = f;
+                  dtr->tmpbuf_len -= f;
                }
-               free(buf);
+               
                return;
             }
             dtr->l_rem -= f;
             dtr->dst.fl.off += f;
-            dtr->src.fl.off += f;
          }
          free(buf);
          break;
          
       case SRC_ISMEM: /* mem2fd */
-         if (dtr->dst.fl.use_off)
-            e = pwrite(dtr->dst.fl.fd, dtr->src.mem.buf + (dtr->l - dtr->l_rem), dtr->l_rem, dtr->dst.fl.off);
-         else
-            e = write(dtr->dst.fl.fd, dtr->src.mem.buf + (dtr->l - dtr->l_rem), dtr->l_rem);
-         CHECKRV(e);
-         dtr->l_rem -= e;
-         dtr->dst.fl.off += e;
+         cd_mem2fd(dtr);
          break;
       
       case DST_ISMEM: /* fd2mem */
@@ -283,6 +330,7 @@ static DataTransferRequest* DataTransferRequest_new(PyTypeObject *type,
    self = (DataTransferRequest*) type->tp_alloc(type, 0);
    if (!self) return self;
    
+   self->tmpbuf = NULL;
    self->next = dtr_unqueued;
    self->ttype = 0;
    Py_INCREF(py_src);
@@ -352,6 +400,7 @@ static void DataTransferRequest_dealloc(DataTransferRequest *self) {
       Py_DECREF(self->opaque);
       Py_DECREF(self->dtd);
    }
+   free(self->tmpbuf);
    Py_TYPE(self)->tp_free((PyObject*)self);
 }
 

@@ -134,6 +134,7 @@ class _ModuleSelfTester:
    def run_tests(self):
       self.tests_prep()
       self.rt_backend()
+      self.rt_backend()
       self.rt_socks(False)
       #self.rt_socks(True)
       
@@ -404,15 +405,10 @@ class _ModuleSelfTester:
       for (off1, off2) in offpairs:
          mv2[off2:off2+bs] = mv[off1:off1+bs]
       
-      #ba = None
-      #mv = None
+      ba = None
+      mv = None
       
       self.log(20, 'Done. Verifying equality ...')
-      self.f1.seek(0)
-      for (off1, off2) in offpairs:
-         d1 = mv2[off1:off1+bs]
-         d2 = self.f1.read(bs)
-         print (d1 == d2, off1)
       
       hd2 = self.hash_data(mv2, self.hd1)
 
