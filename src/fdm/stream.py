@@ -219,6 +219,7 @@ class AsyncDataStream:
       dtr.errno = EAGAIN
       
       self._outbuf.append(dtr)
+      del(dtr)
       if not (self._outbuf[0] is None):
          self._fw.write_r()
 
