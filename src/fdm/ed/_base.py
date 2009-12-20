@@ -126,6 +126,9 @@ class EventDispatcherBase:
       if (i >= len(self._fdwl)):
          self._fdl_sizeinc(i+1)
       if not (self._fdwl[i] is None):
+         if ((not (fl is None)) and (self._fdwl[i]._fl != fl)):
+            raise ValueError('Existing fw for fd {0} has FL {1!a}, fl arg is {2!a}.'
+               .format(fd, self._fdwl[i]._fl, fl))
          return self._fdwl[i]
       
       rv = _FDWrap(self, fd, fl=fl)
