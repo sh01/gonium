@@ -37,7 +37,7 @@ class DataTransferDispatcher(_DataTransferDispatcher):
       """Attach to EventDispatcher by signal pipe."""
       if not (self.fw is None):
          raise ValueError('Already attached.')
-      fw = ed.fd_wrap(self.fileno(), self)
+      fw = ed.fd_wrap(self.fileno(), fl=self)
       fw.read_r()
       fw.process_readability = self.process_results
    
@@ -133,11 +133,14 @@ class _ModuleSelfTester:
 
    def run_tests(self):
       self.tests_prep()
+      self.rt_socks(True, True)
       self.rt_socks(False)
       self.rt_backend()
       self.rt_backend()
       self.rt_socks(False)
-      #self.rt_socks(True)
+      self.rt_socks(True, False)
+      self.rt_socks(True, False)
+      self.rt_socks(True, True)
       
       self.log(20, 'All done.')
 
@@ -344,12 +347,23 @@ class _ModuleSelfTester:
          if (not dtr.get_missing_byte_count()):
             raise Exception("DTR with args {0!a} failed to fail.".format(args))
    
-   def rt_socks(self, use_ssl):
+   def rt_socks(self, use_ssl, defer_ssl_send=False):
       import random
       from collections import deque
       from ..fdm.stream import AsyncDataStream, AsyncSockServer
       
-      self.log(20, 'Socket test: file2sock: randomized regular / dtded in random order.')
+      if (use_ssl):
+         import tempfile
+         from ._blockfd_tcd import dummy_ca_crt, dummy_ca_key
+         
+         caf_crt = tempfile.NamedTemporaryFile()
+         caf_key = tempfile.NamedTemporaryFile()
+         caf_crt.write(dummy_ca_crt)
+         caf_crt.flush()
+         caf_key.write(dummy_ca_key)
+         caf_key.flush()
+      
+      self.log(20, 'Socket test: file2sock: randomized regular / dtded in random order (SSL: {0}({1})).'.format(use_ssl, defer_ssl_send))
       self.log(20, 'Setting up sockets ...')
       s_s = AsyncSockServer(self.ed, ('127.0.0.1',0))
       saddr = s_s.sock.getsockname()
@@ -377,6 +391,7 @@ class _ModuleSelfTester:
          s_in.discard_inbuf_data()
          if (i == flen):
             ed.shutdown()
+         #print('X1: ', i, i_diff, flen-i)
       
       def s2s_copy_fp(dtr):
          nonlocal s_c2
@@ -406,7 +421,7 @@ class _ModuleSelfTester:
             ed.shutdown()
             return
          s_c2 = sock
-         s_c1_fw = ed.fd_wrap(s_c1.fileno(), s_c1)
+         s_c1_fw = ed.fd_wrap(s_c1.fileno(), fl=s_c1)
          s_c1_fw.process_readability = s2s_copy
          s_c1_fw.read_r()
          ed.shutdown()
@@ -414,33 +429,55 @@ class _ModuleSelfTester:
       
       s_s.connect_process = cp
       s_out = AsyncDataStream.build_sock_connect(self.ed, saddr)
-      if (use_ssl):
-         s_out.do_ssl_handshake(lambda: None)
       
       ed.event_loop()
-      s_in = AsyncDataStream.build_sock_connect(self.ed, saddr)
-      s_in.process_input = pi
-      if (use_ssl):
-         s_in.do_ssl_handshake(lambda: None)
       
-      ed.event_loop()
+      def do_copy():
+         for (off1, off2) in offpairs:
+            if (random.randint(0,1) and 0):
+               s_out.send_bytes_from_file(self.dtd, self.f1, off2, bs)
+            else:
+               self.f1.seek(off2)
+               s_out.send_bytes((self.f1.read(bs),))
+         
+            if (not use_ssl):
+               s2s_transfers.append(self.dtd.new_req(s_c1, s_c2, s2s_copy_fp, bs, None, None))
+      
+      sslh_done = 0
+      def dcisd():
+         nonlocal sslh_done
+         if (not defer_ssl_send):
+            return
+         if (sslh_done < 1):
+            sslh_done += 1
+         do_copy()
+      
+      if (use_ssl):
+         s_in = AsyncDataStream(self.ed, s_c1)
+         s_in.process_input = pi
+      
+      else:
+         s_in = AsyncDataStream.build_sock_connect(self.ed, saddr)
+         s_in.process_input = pi
+         ed.event_loop()
+      
+      if (use_ssl):
+         s_in.do_ssl_handshake(dcisd, server_side=True,
+            certfile=caf_crt.name, keyfile=caf_key.name)
+         s_out.do_ssl_handshake(dcisd)
       
       self.log(20, 'Transferring data ...')
       
-      for (off1, off2) in offpairs:
-         if (random.randint(0,1)):
-            s_out.send_bytes_from_file(self.dtd, self.f1, off2, bs)
-         else:
-            self.f1.seek(off2)
-            s_out.send_bytes((self.f1.read(bs),))
-         
-         s2s_transfers.append(self.dtd.new_req(s_c1, s_c2, s2s_copy_fp, bs, None, None))
+      if (not use_ssl):
+         do_copy()
+      elif (not defer_ssl_send):
+         self.ed.set_timer(1024, do_copy, interval_relative=False)
       
       ed.event_loop()
       
+      s_s._fw.close()
       s_in.close()
       s_out.close()
-      s_s.sock.close()
       
       ba2 = bytearray(flen)
       mv2 = memoryview(ba2)
