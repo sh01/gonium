@@ -639,6 +639,7 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
    self->req = NULL;
    self->req_tp = &self->req;
    self->res = NULL;
+   self->wt_data = NULL;
    self->reqcount = 0;
    self->rescount = 0;
    self->wtcount = 0;
@@ -660,13 +661,15 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
    
    if (pipe(self->spfd)) {
       PyErr_SetFromErrno(PyExc_OSError);
+      free(self->wt_data);
+      self->wt_data = NULL;
       goto fail;
    }
    
    if (fcntl(self->spfd[0], F_SETFL, O_NONBLOCK) ||
        fcntl(self->spfd[1], F_SETFL, O_NONBLOCK)) {
       PyErr_SetFromErrno(PyExc_OSError);
-      goto fail_p;
+      goto fail;
    }
    
    for (i = 0; i < wtc; i++) {
@@ -694,16 +697,12 @@ static DataTransferDispatcher* DataTransferDispatcher_new(PyTypeObject *type,
       
       /* Something went wrong; kill existing worker threads and pipes */
       self->wtcount = i;
-      goto fail_p;
+      goto fail;
    }
    
    self->wtcount = wtc;
    
    return self;
-   
-   fail_p:
-   close(self->spfd[0]);
-   close(self->spfd[1]);
    
    fail:
    Py_DECREF(self);
@@ -758,6 +757,11 @@ static void DataTransferDispatcher_dealloc(DataTransferDispatcher *self) {
    _dtd_killthreads(self);
    free(self->wt_data);
    
+   if (self->wt_data) {
+      close(self->spfd[0]);
+      close(self->spfd[1]);
+   }
+   
    for (req = self->req; req;) {
       req_prev = req;
       req = req->next;
@@ -769,9 +773,6 @@ static void DataTransferDispatcher_dealloc(DataTransferDispatcher *self) {
       req = req->next;
       Py_DECREF(req_prev);
    }
-
-   close(self->spfd[0]);
-   close(self->spfd[1]);
    
    pthread_mutex_destroy(&self->reqs_mtx);
    pthread_mutex_destroy(&self->res_mtx);
