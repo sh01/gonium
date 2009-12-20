@@ -206,20 +206,21 @@ class AsyncDataStream:
          def cb(dtr):
             if (self._outbuf is None):
                return
-            
             self._unblock_output()
             if (dtr.get_missing_byte_count() == 0):
                self._outbuf.appendleft(mv)
             else:
                self._outbuf.appendleft(dtr)
             self._fw.write_r()
-         dtr = dtd.new_req_fd2mem(file, mv, cb, length)
+         dtr = dtd.new_req_fd2mem(file, mv, cb, length, off)
       else:
          dtr = dtd.new_req(file, self.fl, self._bfs_process, length, off, None)
       
       dtr.errno = EAGAIN
       
       self._outbuf.append(dtr)
+      if not (self._outbuf[0] is None):
+         self._fw.write_r()
 
    def discard_inbuf_data(self, count:int=None):
       """Discard <count> bytes of in-buffered data.
@@ -316,9 +317,11 @@ class AsyncDataStream:
                raise CloseFD()
             raise
          
-         if ((0 == rv) and (_known_writable)):
+         if (0 == rv):
+            # Low-level stream file-likes won't do this.
+            # ssl.SSLSocket uses this to indicate EAGAIN.
             self._outbuf.appendleft(buf)
-            raise CloseFD()
+            break
          
          if (rv < len(buf)):
             self._outbuf.appendleft(memoryview(buf)[rv:])
@@ -329,9 +332,6 @@ class AsyncDataStream:
             self._fw.write_u()
          else:
             self._fw.write_r()
-   
-   def _in_ssl(self, buf):
-      return self.fl.read(len(buf), buf)
    
    def _read_data(self):
       """Read and buffer input from wrapped file-like object"""
@@ -365,6 +365,14 @@ class AsyncDataStream:
          return
       import ssl
       from socket import dup
+      
+      for bufel in self._outbuf:
+         if (hasattr(bufel, 'queue')):
+            try:
+               raise ValueError("DTR {0!a} in queue; our fd isn't safe to dup.".format(bufel))
+            except:
+               self.close()
+               raise
       
       self.ssl_handshake_pending = None
       self._in = None
@@ -405,8 +413,12 @@ class AsyncDataStream:
             return
          raise
       
-      self._in = self._in_ssl
-      self._out = self.fl.write
+      # XXX: Is this safe? The ssl code suggests that it may return 0 because
+      # it wants a socket *read* before willing to write more. Does this
+      # actually happen in practice?
+      # If so, we should write our own wrapper around fl.write() instead.
+      self._in = self.fl.recv_into
+      self._out = self.fl.send
       
       self._fw.process_writability = self._output_write
       self._fw.process_readability = self._process_input0
