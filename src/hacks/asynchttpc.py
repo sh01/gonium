@@ -66,7 +66,7 @@ class AsyncHTTPStateError(AsyncHTTPError):
 class HttpHacksFakeSock:
    def __init__(self, file):
       self.file = file
-   def makefile(self, mode, bufsize):
+   def makefile(self, mode=None, buffering=None, *args):
       """Return stored file-like object. Parameters are ignored."""
       return self.file
 
