@@ -241,7 +241,7 @@ static PyObject *AIOManager_suspend(AIOManager *self, PyObject *args) {
    tv.tv_sec = (long) timeout;
    tv.tv_nsec = ((timeout - (double)(long) timeout) * 1E9);
    
-   rc = aio_suspend((const struct aiocb **)self->cbpa, self->cbpa_len, &tv);
+   while ((rc = aio_suspend((const struct aiocb **)self->cbpa, self->cbpa_len, &tv)) && (errno == EINTR));
    if (rc) {
       if (errno == EAGAIN) return PyList_New(0);
       PyErr_SetFromErrno(PyExc_IOError);
