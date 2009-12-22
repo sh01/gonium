@@ -109,7 +109,7 @@ class IPAddressBase(object):
          return 0
 
    def __repr__(self):
-      return '{0}.fromstring({1})'.format(self.__class__.__name__, self.__str__())
+      return '{0}.fromstring({1!a})'.format(self.__class__.__name__, self.__str__())
    
    def __int__(self):
       return self.ip
