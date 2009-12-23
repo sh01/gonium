@@ -62,7 +62,7 @@ class DataTransferDispatcher(_DataTransferDispatcher):
       """Return new mem2fd DTR."""
       if (length is None):
          length = len(src)
-      return DataTransferRequest(self, src, dst, src_off, None, length, cb)
+      return DataTransferRequest(self, src, dst, None, dst_off, length, cb)
    
    def new_req_mem2mem(self, src, dst, cb, length=None):
       """Return new mem2mem DTR."""
