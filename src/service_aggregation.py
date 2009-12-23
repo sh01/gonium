@@ -20,21 +20,34 @@ from .fdm import ED_get
 
 class ServiceAggregate:
    """Aggregate of pseudo-singleton highly-stateful callbacking services"""
-   def __init__(self, ed=None, sc=None, aio=None):
+   def __init__(self, ed=None, sc=None, aio=None, dtd=None):
       if (ed is None):
          ed = ED_get()()
       self.ed = ed
       if (sc is None):
          sc = EMSignalCatcher(ed)
       self.sc = sc
-      if (aio is None):
-         aio = EAIOManager(self)
       self.aio = aio
+      self.dtd = dtd
+   
+   def add_aio(self):
+      """Instantiate and store EAIOManager (posix.aio)"""
+      if not (self.aio is None):
+         raise Exception('I already have an AIO object.')
+      self.aio = EAIOManager(self)
+   
+   def add_dtd(self, wt_count=50):
+      """Instantiate and store DataTransferDispatcher (posix.blockfd)"""
+      if not (self.dtd is None):
+         raise Exception('I already have a DTD object.')
+      
+      self.dtd = DataTransferDispatcher(wt_count)
+      self.dtd.attach_ed(self.ed)
 
 # Ugly workaround for cyclical inter-file dependencies
 from .posix.signal import EMSignalCatcher
 from .posix.aio import EAIOManager
-
+from .posix.blockfd import DataTransferDispatcher
 
 def _selftest():
    ServiceAggregate()
