@@ -791,6 +791,18 @@ static PyMethodDef DataTransferDispatcher_methods[] = {
    {NULL}  /* Sentinel */
 };
 
+PyDoc_STRVAR(DataTransferDispatcherType_doc,
+"DataTransferDispatcher(wt_count) -> new DTD with specified number of worker threads\n"
+"\n"
+"Object for creating ({fd,mem}2{fd,mem}) DataTransferRequests, waiting on\n"
+"them and retrieving finished requests.\n"
+"Note that fork()ing after using an object of this type will create undefined\n"
+"(and highly unsafe) behaviour unless you immediately follow up with an\n"
+"exec*() call.\n\n"
+"Either a controlled destruction mechanism or fork-resistance through\n"
+"posix_atfork() may be provided in a future version; for now, do any\n"
+"non-exec fork()s *before* first instantiating this class.\n");
+
 static PyTypeObject DataTransferDispatcherType = {
    PyVarObject_HEAD_INIT(&PyType_Type, 0)
    "_blockfd.DataTransferDispatcher", /* tp_name */
@@ -812,7 +824,7 @@ static PyTypeObject DataTransferDispatcherType = {
    0,                         /* tp_setattro */
    0,                         /* tp_as_buffer */
    Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,  /* tp_flags */
-   "FD2FD data transfer dispatcher.", /* tp_doc */
+   DataTransferDispatcherType_doc, /* tp_doc */
    0,		              /* tp_traverse */
    0,		              /* tp_clear */
    0,		              /* tp_richcompare */

@@ -28,6 +28,7 @@ from ._blockfd import DataTransferDispatcher as _DataTransferDispatcher, \
 class DataTransferDispatcher(_DataTransferDispatcher):
    logger = logging.getLogger('DataTransferDispatcher')
    log = logger.log
+   __doc__ = _DataTransferDispatcher.__doc__
    
    def __init__(self, *args, **kwargs):
       super().__init__()
