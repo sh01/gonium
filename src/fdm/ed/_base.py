@@ -260,6 +260,7 @@ class _FDWrap:
       self.write_u()
       if (self._ed._fdwl[self.fd] is self):
          self._ed._fdwl[self.fd] = None
+      self._ed = None
 
    def close_by_gc(self):
       """Prepare for closing fd, but leave the actual closing up to the GC."""
@@ -270,7 +271,6 @@ class _FDWrap:
          _log(40, 'Error in fd-close handler:', exc_info=True)
 
       self._fl = False
-      self._ed = None
 
    def close(self):
       """Close this fd."""
@@ -287,7 +287,6 @@ class _FDWrap:
          _log(40, 'Error in fd-close handler:', exc_info=True)
 
       self._fl = False
-      self._ed = None
    
    def fileno(self):
       """Return wrapped fd."""
