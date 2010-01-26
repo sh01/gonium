@@ -440,13 +440,14 @@ class AsyncDataStream:
          raise Exception('SSL handshake requested previously.')
       
       self.ssl_callback = callback
+      self._block_output()
+      
       if not (self.connected):
          # We'll let the connect handler do this, then.
          self._out = None
          self.ssl_handshake_pending = (ssl_args, ssl_kwargs)
          return
       
-      self._block_output()
       self._ed.set_timer(0, self._do_ssl_handshake, interval_relative=False,
          args=ssl_args, kwargs=ssl_kwargs)
    
