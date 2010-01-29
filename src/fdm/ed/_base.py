@@ -248,10 +248,10 @@ class _FDWrap:
       """Unegister fd for reading."""
       self._ed._fdcb_read_u(self.fd)
    def write_r(self):
-      """Register fd for writng."""
+      """Register fd for writing."""
       self._ed._fdcb_write_r(self.fd)
    def write_u(self):
-      """Unregister fd for writng."""
+      """Unregister fd for writing."""
       self._ed._fdcb_write_u(self.fd)
 
    def unregister(self):
