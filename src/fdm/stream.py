@@ -20,6 +20,7 @@
 import collections
 import errno
 import logging
+import os
 import subprocess
 import socket
 import sys
@@ -389,7 +390,11 @@ class AsyncDataStream:
       except AttributeError:
          pass
       
-      sock_tmp = socket.socket(**skwargs)
+      try:
+         sock_tmp = socket.socket(**skwargs)
+      except:
+         os.close(skwargs['fileno'])
+         raise
       self._fw.process_close = lambda: None
       self._fw.close()
       self.fl.close()
