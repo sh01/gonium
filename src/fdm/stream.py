@@ -378,17 +378,27 @@ class AsyncDataStream:
       self.ssl_handshake_pending = None
       self._in = None
       self._out = None
-      # ssl.SSLSocket dup()s socket's fd and closes the original, if you pass
-      # it a socket. This is kinda hard to deal with for our code; better to
-      # do the dup() on our own.
-      fd_new = dup(self.fl.fileno())
+      # Since r80515, ssl.SSLSocket is even harder to deal with than before, since just passing the fileno of an existing
+      # connection to the constructor doesn't work correctly anymore.
+      # We hack around this API issue here. This now results in two unnecessary dups and closes, but should at least work.
+      skwargs = {'fileno': dup(self.fl.fileno())}
+      try:
+         skwargs['family'] = self.fl.family
+         skwargs['type'] = self.fl.type
+         skwargs['proto'] = self.fl.proto
+      except AttributeError:
+         pass
+      
+      sock_tmp = socket.socket(**skwargs)
       self._fw.process_close = lambda: None
       self._fw.close()
+      self.fl.close()
+      self.fl = None
       try:
-         ssl_sock = ssl.SSLSocket(fileno=fd_new, *ssl_args,
+         ssl_sock = ssl.SSLSocket(sock=sock_tmp, *ssl_args,
             do_handshake_on_connect=False, **ssl_kwargs)
-      except:
-         raise
+      finally:
+         sock_tmp.close()
       
       ssl_sock.setblocking(0)
       self.fl = ssl_sock
