@@ -271,6 +271,7 @@ class AsyncDataStream:
       self._in = None
       self._out = None
       self._outbuf = None
+      self.fl = None
       self.process_close()
 
    def _block_output(self):
