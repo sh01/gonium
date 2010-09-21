@@ -396,6 +396,7 @@ class AsyncDataStream:
       except:
          os.close(skwargs['fileno'])
          raise
+      sock_tmp.setblocking(0)
       self._fw.process_close = lambda: None
       self._fw.close()
       self.fl.close()
