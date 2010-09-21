@@ -424,12 +424,14 @@ class AsyncDataStream:
       # circumstance want to use it on nonblocking sockets. read() is fine, though, and does the same if you know how to call
       # it.
       from ssl import SSLError, SSL_ERROR_WANT_READ
+      from errno import EAGAIN
+      from builtins import IOError
       def ssl_read(buf):
          try:     
             rv = ssl_sock.read(-1, buf)
          except SSLError as exc:
             if (exc.args[0] == SSL_ERROR_WANT_READ):
-               return 0
+               raise IOError(EAGAIN, '')
             raise
          return rv
       return ssl_read
