@@ -418,6 +418,15 @@ class AsyncDataStream:
       self._fw.process_readability = self._ssl_handshake_step
       self._ssl_handshake_step()
    
+   @staticmethod
+   def _make_ssl_wrap(ssl_sock):
+      # Python 3.1.1 and probably others are really stupid about recv_into() ... basically, you really don't under any
+      # circumstance want to use it on nonblocking sockets. read() is fine, though, and does the same if you know how to call
+      # it.
+      def ssl_read(buf):
+         return ssl_sock.read(-1, buf)
+      return ssl_read
+   
    def _ssl_handshake_step(self):
       from ssl import SSLError, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE
       try:
@@ -435,7 +444,7 @@ class AsyncDataStream:
       # it wants a socket *read* before willing to write more. Does this
       # actually happen in practice?
       # If so, we should write our own wrapper around fl.write() instead.
-      self._in = self.fl.recv_into
+      self._in = self._make_ssl_wrap(self.fl)
       self._out = self.fl.send
       
       self._fw.process_writability = self._output_write
