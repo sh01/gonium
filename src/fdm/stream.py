@@ -423,7 +423,7 @@ class AsyncDataStream:
       # Python 3.1.1 and probably others are really stupid about recv_into() ... basically, you really don't under any
       # circumstance want to use it on nonblocking sockets. read() is fine, though, and does the same if you know how to call
       # it.
-      from ssl import SSL_ERROR_WANT_READ
+      from ssl import SSLError, SSL_ERROR_WANT_READ
       def ssl_read(buf):
          try:     
             rv = ssl_sock.read(-1, buf)
