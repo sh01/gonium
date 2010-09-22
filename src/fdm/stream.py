@@ -420,9 +420,10 @@ class AsyncDataStream:
    
    @staticmethod
    def _make_ssl_wrap(ssl_sock):
-      # Python 3.1.1 and probably others are really stupid about recv_into() ... basically, you really don't under any
-      # circumstance want to use it on nonblocking sockets. read() is fine, though, and does the same if you know how to call
-      # it.
+      # Python bug 3890 (<http://bugs.python.org/issue3890>):
+      # SSL sockets from python stdlib versions with this bug are really stupid about recv() and recv_into() ... basically,
+      # trying to use it on nonblocking sockets is a _bad idea_.
+      # read() works fine, though, and does the same if you know how to call it.
       from ssl import SSLError, SSL_ERROR_WANT_READ
       from errno import EAGAIN
       from builtins import IOError
