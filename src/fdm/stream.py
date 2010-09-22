@@ -428,7 +428,7 @@ class AsyncDataStream:
       from errno import EAGAIN
       from builtins import IOError
       def ssl_read(buf):
-         try:     
+         try:
             rv = ssl_sock.read(-1, buf)
          except SSLError as exc:
             if (exc.args[0] == SSL_ERROR_WANT_READ):
@@ -450,11 +450,11 @@ class AsyncDataStream:
             return
          raise
       
+      self._in = self._make_ssl_wrap(self.fl)
       # XXX: Is this safe? The ssl code suggests that it may return 0 because
       # it wants a socket *read* before willing to write more. Does this
       # actually happen in practice?
       # If so, we should write our own wrapper around fl.write() instead.
-      self._in = self._make_ssl_wrap(self.fl)
       self._out = self.fl.send
       
       self._fw.process_writability = self._output_write
