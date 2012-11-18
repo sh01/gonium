@@ -1,5 +1,5 @@
 #!/usr/bin/python
-#Copyright 2004, 2005, 2006 Sebastian Hagen
+#Copyright 2004, 2005, 2006, 2012 Sebastian Hagen
 # This file is part of gonium.
 #
 # gonium is free software; you can redistribute it and/or modify
@@ -41,9 +41,9 @@ def ip_address_build(ip_data):
          except socket.error:
             pass
    else:
-      raise TypeError('Invalid type {0} for argument ip_data of value {1} (expected numeric or string type).'.format(type(ip_data), ip_data))
+      raise TypeError('Invalid type {!a} for argument ip_data of value {!a} (expected numeric or string type).'.format(type(ip_data), ip_data))
    
-   raise ValueError('Unable to convert argument {0} to a v4 or v6 ip address.'.foamt(ip_data))
+   raise ValueError('Unable to convert argument {!a} to a v4 or v6 ip address.'.format(ip_data))
 
 
 class IPAddressBase(object):
