@@ -20,7 +20,7 @@ from .fdm import ED_get
 
 class ServiceAggregate:
    """Aggregate of pseudo-singleton highly-stateful callbacking services"""
-   def __init__(self, ed=None, sc=None, aio=None, dtd=None):
+   def __init__(self, ed=None, sc=None, aio=None, dtd=None, dnslm=None):
       if (ed is None):
          ed = ED_get()()
       self.ed = ed
@@ -29,9 +29,11 @@ class ServiceAggregate:
       self.sc = sc
       self.aio = aio
       self.dtd = dtd
+      self.dnslm = dnslm
    
    def add_aio(self):
       """Instantiate and store EAIOManager (posix.aio)"""
+      from .posix.aio import EAIOManager
       if not (self.aio is None):
          raise Exception('I already have an AIO object.')
       self.aio = EAIOManager(self)
@@ -43,14 +45,25 @@ class ServiceAggregate:
       
       self.dtd = DataTransferDispatcher(wt_count)
       self.dtd.attach_ed(self.ed)
+   
+   def add_dnslm(self):
+      """Instantiate and store a LookupManager (dns_resolving)"""
+      if not (self.dnslm is None):
+         raise Exception('I already have a DNSLM object.')
+      
+      rc = ResolverConfig.build_from_file()
+      self.dnslm = rc.build_lookup_manager(self.ed)
 
 # Ugly workaround for cyclical inter-file dependencies
 from .posix.signal import EMSignalCatcher
-from .posix.aio import EAIOManager
 from .posix.blockfd import DataTransferDispatcher
+from .dns_resolving import ResolverConfig
 
 def _selftest():
-   ServiceAggregate()
+   sa = ServiceAggregate()
+   sa.add_aio()
+   sa.add_dtd()
+   sa.add_dnslm()
 
 if (__name__ == '__main__'):
    _selftest()

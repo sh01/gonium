@@ -19,10 +19,10 @@ import collections
 import logging
 import os
 import signal
-from collections import deque
 
-from .signal import SA_RESTART
+from collections import deque
 from ..service_aggregation import ServiceAggregate
+from .signal import SA_RESTART
 from . import _aio
 from ._aio import LIO_READ, LIO_WRITE, AIOManager, AIORequest
 
@@ -40,7 +40,7 @@ class EAIORequest(AIORequest):
       self.callback = callback
    
    def __repr__(self):
-      return ('<AIORequest at {0}, mode {1}, fd {2}:{3}, memory {4!a}({5} bytes)>'
+      return ('<AIORequest at {}, mode {!a}, fd {!a}:{!a}, memory {!a}({} bytes)>'
               ''.format(id(self), self.mode, self.fd, self.offset, self.buf,
               len(self.buf)))
 
@@ -79,7 +79,7 @@ class EAIOManager(AIOManager):
          except Exception:
             if (req.callback is None):
                continue
-            _log(40, 'Exception in AIO handler {0} on Request {1}:'.format(req.callback, req), exc_info=True)
+            _log(40, 'Exception in AIO handler {} on Request {}:'.format(req.callback, req), exc_info=True)
    
    def _handle_overflow(self):
       """Deal with lost signals"""
@@ -92,8 +92,6 @@ class EAIOManager(AIOManager):
       """
       for req in req_s:
          AIOManager.io(self,req)
-
-
 
 def _selftest():
    _test_aiom(EAIOManager)
@@ -138,7 +136,7 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
          if (ev_count == test_count):
             ed.shutdown()
          return
-      print('req {0} failed with rc {1}.'.format(req, req.rc))
+      print('req {} failed with rc {}.'.format(req, req.rc))
       fail_count += 1
    
    def aio_rres_process(req):
@@ -149,7 +147,7 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
          if (ev_count == test_count):
             ed.shutdown()
          return
-      print('FAIL: Req at offset {0}; read: {1}'.format(req.offset, req.buf))
+      print('FAIL: Req at offset {}; read: {}'.format(req.offset, req.buf))
       fail_count += 1
    
    def aio_phase2():
@@ -159,19 +157,19 @@ def _test_aiom(aiom_cls, test_count=1024, chunksize=4096):
          if (len(data) == 0):
             break
          if (len(data) < chunksize):
-            raise ValueError('Last block blockingly read contained {0} bytes: {1}.'.format(len(data), data))
+            raise ValueError('Last block blockingly read contained {} bytes: {}.'.format(len(data), data))
          (j,) = struct.unpack('>L', data[:4])
          if (j == i):
             i += 1
             continue
-         raise ValueError('Read bytes {0} from index {1}.'.format(data, i*chunksize))
+         raise ValueError('Read bytes {} from index {}.'.format(data, i*chunksize))
    
    def results_check():
       if (fail_count):
-         raise Exception("{0} of {1} of {2} tests failed.".format(fail_count, ev_count, test_count))
+         raise Exception("{} of {} of {} tests failed.".format(fail_count, ev_count, test_count))
       if (ev_count != test_count):
-         raise Exception("Only got results for {0} of {1} tests (no confirmed failures).".format(ev_count, test_count))
-      print('{0} of {1} tests succeeded; no confirmed failures.'.format(ev_count, test_count))
+         raise Exception("Only got results for {} of {} tests (no confirmed failures).".format(ev_count, test_count))
+      print('{} of {} tests succeeded; no confirmed failures.'.format(ev_count, test_count))
    
    f = os.open(fn,baseflags|os.O_CREAT)
    
