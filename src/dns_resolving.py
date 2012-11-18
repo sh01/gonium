@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007,2008 Sebastian Hagen
+#Copyright 2007,2008,2012 Sebastian Hagen
 # This file is part of gonium.
 #
 # gonium is free software; you can redistribute it and/or modify
@@ -22,7 +22,7 @@ from io import BytesIO
 import random
 
 from . import ip_address
-from .ip_address import IPAddressV4, IPAddressV6
+from .ip_address import IPAddressV4, IPAddressV6, ip_address_build
 from .fdm import AsyncPacketSock
 
 CLASS_IN = 1
@@ -326,12 +326,12 @@ class RDATA_TXT(RDATA):
          self.txt_data)
    
    @classmethod
-   def build_from_binstream(self, binstream, rdlength):
+   def build_from_binstream(cls, binstream, rdlength):
       rdata = cls.rdata_read(binstream, rdlength)
       i = 0
       txt_data = []
       while (i < rdlength):
-         (slen,) = struct.unpack(b'>B', rdata[i])
+         (slen,) = struct.unpack(b'>B', rdata[i:i+1])
          j = i + 1 + slen
          txt = rdata[i+1:j]
          if (len(txt) < slen):
@@ -621,23 +621,71 @@ class DNSQuery:
          self.la = None
 
 
+class ResolverConfig:
+   DEFAULT_FN = '/etc/resolv.conf'
+   PORT = 53
+   def __init__(self, nameservers):
+      self.ns = nameservers
+
+   @classmethod
+   def build_from_file(cls, fn=None):
+      if (fn is None):
+         fn = cls.DEFAULT_FN
+
+      nameservers = []
+      try:
+         f = open(fn, 'r')
+      except IOError:
+         pass
+      else:
+         for line in f:
+            words = line.split()
+            if (not words):
+               continue
+            if (words[0].startswith('#')):
+               continue
+            if (words[0] == 'nameserver'):
+               if (len(words) > 1):
+                  try:
+                     ip = ip_address_build(words[1])
+                  except ValueError:
+                     continue
+                  nameservers.append(ip)
+               continue
+         f.close()
+
+      if (not nameservers):
+         nameservers = [ip_address_build(s) for s in ('127.0.0.1','::1')]
+
+      return cls(nameservers)
+
+   def get_addr(self):
+      return (str(self.ns[0]), self.PORT)
+      
+   def build_lookup_manager(self, ed):
+      return DNSLookupManager(ed, ns_addr=self.get_addr())
+
+
 class DNSLookupManager:
    logger = logging.getLogger('gonium.dns_resolving.DNSLookupManager')
    log = logger.log
-   def __init__(self, event_dispatcher, ns_addr, addr_family=socket.AF_INET):
+   def __init__(self, event_dispatcher, ns_addr, addr_family=None):
       self.event_dispatcher = event_dispatcher
+      self.cleaning_up = False
+      if (not (len(ns_addr) == 2)):
+         raise ValueError('Argument ns_addr should have two elements; got {0!a}'.format(ns_addr,))
+      
+      ip_addr = ip_address.ip_address_build(ns_addr[0])
+      if (addr_family is None):
+         addr_family = ip_addr.AF
       
       sock = socket.socket(addr_family, socket.SOCK_DGRAM)
       self.sock = AsyncPacketSock(self.event_dispatcher, sock)
       self.sock.process_input = self.data_process
       self.sock.process_close = self.close_process
-
-      self.cleaning_up = False
-      if (not (len(ns_addr) == 2)):
-         raise ValueError('Argument ns_addr should have two elements; got {0!a}'.format(ns_addr,))
       
       # Normalize ns_addr argument
-      self.ns_addr = (str(ip_address.ip_address_build(ns_addr[0])), int(ns_addr[1]))
+      self.ns_addr = (str(ip_addr), int(ns_addr[1]))
       self.queries = {}
    
    def data_process(self, data, source):
@@ -853,10 +901,11 @@ def _module_selftest_local():
    return True
 
 
-def _module_selftest_network(ns_addr, af=socket.AF_INET):
+def _module_selftest_network(ns_addr):
+   af = ip_address_build(ns_addr[0]).AF
    s = socket.socket(af, socket.SOCK_DGRAM)
    query_data = DNSFrame(questions=[DNSQuestion(DomainName(b'www.example.net'), QTYPE_ALL)], id=1236).binary_repr()
-   
+
    s.sendto(query_data, ns_addr)
    print('Sending query {0!a} to {1!a}...'.format(query_data, ns_addr,))
    (in_data, in_addr) = s.recvfrom(512)
@@ -868,9 +917,9 @@ def _module_selftest_network(ns_addr, af=socket.AF_INET):
 
 
 class _StatefulLookupTester_1:
-   def __init__(self, ed, ns_addr, question):
+   def __init__(self, ed, blm, question):
       self.ed = ed
-      self.la = DNSLookupManager(self.ed, ns_addr)
+      self.la = blm(self.ed)
       self.query = DNSQuery(self.la, self.result_handler, id=42, question=question, timeout=20)
       self.ed.event_loop()
    
@@ -879,9 +928,9 @@ class _StatefulLookupTester_1:
       self.ed.shutdown()
 
 class _StatefulLookupTester_2:
-   def __init__(self, ed, ns_addr, questionstring, qtypes):
+   def __init__(self, ed, blm, questionstring, qtypes):
       self.ed = ed
-      self.la = DNSLookupManager(self.ed, ns_addr)
+      self.la = blm(self.ed)
       self.query = SimpleDNSQuery(self.la, self.result_handler, questionstring, qtypes, timeout=20)
       self.ed.event_loop()
    
@@ -891,29 +940,42 @@ class _StatefulLookupTester_2:
       self.ed.shutdown()
 
 
-def _module_selftest_stateful_network(ns_addr):
+def _module_selftest_stateful_network(blm):
    from .fdm import ED_get
    ED = ED_get()
-   q1 = _StatefulLookupTester_1(ED(), ns_addr, DNSQuestion(DomainName(b'www.example.net'),QTYPE_ALL))
-   q2 = _StatefulLookupTester_2(ED(), ns_addr, b'sixxs.net', qtypes=(RDATA_A.type, RDATA_AAAA.type))
+   q1 = _StatefulLookupTester_1(ED(), blm, DNSQuestion(DomainName(b'www.example.net'),QTYPE_ALL))
+   q2 = _StatefulLookupTester_2(ED(), blm, b'sixxs.net', qtypes=(RDATA_A.type, RDATA_AAAA.type))
 
 
 def _selftest():
    from ._debugging import streamlogger_setup; streamlogger_setup()
+   import optparse
    
-   print('Testing stateless components, locally only...')
+   op = optparse.OptionParser()
+   op.add_option('--ns_ip', default=None, help='Set nameserver IP to this value instead of parsing from config.')
+   op.add_option('--ns_port', default=53, help='Nameserver port to use in conjunction with ns_ip.')
+   op.add_option('--config_fn', default='/etc/resolv.conf', help='Path of resolv.conf to use.')
+   
+   (opts, args) = op.parse_args()
+   if (opts.ns_ip):
+      ns_addr = (opts.ns_ip, int(opts.ns_port))
+      def blm(*args):
+         return DNSLookupManager(*args, ns_addr=ns_addr)
+   else:
+      rc = ResolverConfig.build_from_file(opts.config_fn)
+      ns_addr = rc.get_addr()
+      blm = rc.build_lookup_manager
+   
+   print('==== Testing stateless components, locally only')
    _module_selftest_local()
    print('...test done.\n')
    
-   print('Testing stateless components, using network connections...')
-   import sys
-   ns_ipaddr = sys.argv[1]
-   ns_port = int(sys.argv[2])
-   _module_selftest_network(ns_addr=(ns_ipaddr, ns_port))
+   print('==== Testing stateless components, using network connections')
+   _module_selftest_network(ns_addr)
    print('...test done.\n')
    
-   print('Testing stateful components, using network connections; if this hangs, you probably have a problem:')
-   _module_selftest_stateful_network((ns_ipaddr, ns_port))
+   print('==== Testing stateful components, using network connections (if this hangs, you probably have a problem)')
+   _module_selftest_stateful_network(blm)
    print('...test done.\n')
    
    print('Self-test passed.')

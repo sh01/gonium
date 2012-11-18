@@ -125,14 +125,15 @@ class IPAddressV4(IPAddressBase):
    factor = 256
    subelements = 4
    ip_minimum = 0
-   ip_maximum = factor**subelements -1
+   ip_maximum = factor**subelements - 1
+   AF = AF_INET
    
-   @staticmethod
-   def _ipintfromstring(ip_string):
+   @classmethod
+   def _ipintfromstring(cls, ip_string):
       if not (isinstance(ip_string, str)):
          # Having to do this is *so* moronic!
          ip_string = ip_string.decode('ascii')
-      return struct.unpack(b'>L', inet_pton(AF_INET, ip_string))[0]
+      return struct.unpack(b'>L', inet_pton(cls.AF, ip_string))[0]
    
    def __str__(self):
       return inet_ntop(AF_INET,struct.pack(b'>L', self.ip))
@@ -143,13 +144,14 @@ class IPAddressV6(IPAddressBase):
    subelements = 8
    ip_minimum = 0
    ip_maximum = factor**subelements - 1
+   AF = AF_INET6
    
-   @staticmethod
-   def _ipintfromstring(ip_string):
+   @classmethod
+   def _ipintfromstring(cls, ip_string):
       if not (isinstance(ip_string, str)):
          # Having to do this is *so* moronic!
          ip_string = ip_string.decode('ascii')
-      (int1, int2) = struct.unpack(b'>QQ', inet_pton(AF_INET6, ip_string))
+      (int1, int2) = struct.unpack(b'>QQ', inet_pton(cls.AF, ip_string))
       return (int1 << 64) + int2 
 
    def __str__(self):
