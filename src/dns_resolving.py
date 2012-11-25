@@ -23,7 +23,7 @@ import random
 
 from . import ip_address
 from .ip_address import IPAddressV4, IPAddressV6, ip_address_build
-from .fdm import AsyncPacketSock
+from .fdm.packet import AsyncPacketSock
 
 CLASS_IN = 1
 CLASS_CS = 2
@@ -763,6 +763,8 @@ class DNSLookupManager:
       self.queries = {}
       self.cleaning_up = False
 
+   def build_simple_query(self, *args, **kwargs):
+      return SimpleDNSQuery(self, *args, **kwargs)
 
 class DNSLookupResult:
    def __init__(self, query_name, answers, additional_records):
@@ -802,6 +804,8 @@ class SimpleDNSQuery:
    logger = logging.getLogger('gonium.dns_resolving.SimpleDNSQuery')
    log = logger.log
    def __init__(self, lookup_manager, result_handler, query_name, qtypes, timeout):
+      if (isinstance(query_name, str)):
+         query_name = query_name.encode('ascii')
       query_name = DomainName(query_name)
       self.lookup_manager = lookup_manager
       self.result_handler = result_handler
@@ -843,13 +847,13 @@ class SimpleDNSQuery:
             continue
          for answer in result.answers:
             if (not (answer.name in names_valid)):
-               self.log(30, "{0!a} got bogus answer {1!a}; didn't expect this name. Ignoring.".format(self, answer)) 
+               self.log(30, "{!a} got bogus answer {!a}; didn't expect this name. Ignoring.".format(self, answer)) 
                continue
             if (answer.type == RDATA_CNAME.type):
                names_valid.add(answer.rdata.domain_name)
             
             elif (not ((answer.type in self.qtypes) or self.qtype_special)):
-               self.log(30, "{0!a} got bogus answer {1!a}; didn't expect this type. Ignoring.".format(self, answer))
+               self.log(30, "{!a} got bogus answer {!a}; didn't expect this type. Ignoring.".format(self, answer))
                continue
             
             if not (answer.rdata in valid_results):
@@ -873,11 +877,13 @@ class SimpleDNSQuery:
       self.result_handler = None
       self.lookup_manager = None
 
+QTYPE_A = RDATA_A.type
+QTYPE_AAAA = RDATA_AAAA.type
 # ----------------------------------------------------------------------------- selftest code
 
 def _module_selftest_local():
-   question_1 = DNSQuestion(DomainName(b'www.example.net'),RDATA_A.type,1)
-   question_2 = DNSQuestion(DomainName(b'example.net'),RDATA_AAAA.type,1)
+   question_1 = DNSQuestion(DomainName(b'www.example.net'),QTYPE_A,1)
+   question_2 = DNSQuestion(DomainName(b'example.net'),QTYPE_AAAA,1)
    
    f1_0 = DNSFrame(questions=[question_1, question_2],id=1234)
    r1_0 = f1_0.binary_repr()
@@ -944,7 +950,7 @@ def _module_selftest_stateful_network(blm):
    from .fdm import ED_get
    ED = ED_get()
    q1 = _StatefulLookupTester_1(ED(), blm, DNSQuestion(DomainName(b'www.example.net'),QTYPE_ALL))
-   q2 = _StatefulLookupTester_2(ED(), blm, b'sixxs.net', qtypes=(RDATA_A.type, RDATA_AAAA.type))
+   q2 = _StatefulLookupTester_2(ED(), blm, b'sixxs.net', qtypes=(QTYPE_A, QTYPE_AAAA))
 
 
 def _selftest():
