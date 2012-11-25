@@ -32,7 +32,8 @@ from select import poll, POLLOUT
 from socket import socket as socket_cls, AF_INET, SOCK_STREAM, SOL_SOCKET, \
    SO_ERROR, error as sockerr
 
-from ..ip_address import IPAddressBase
+from ..dns_resolving import QTYPE_A, QTYPE_AAAA
+from ..ip_address import IPAddressBase, ip_address_build
 from .exceptions import CloseFD
 
 _logger = logging.getLogger('gonium.fd_management')
@@ -66,9 +67,20 @@ class AsyncDataStream:
    _SOCK_ERRNO_TRANS = {0, EINTR, ENOBUFS, ENOMEM, EAGAIN}
    _SOCK_ERRNO_FATAL = {ECONNREFUSED, ECONNRESET, EHOSTUNREACH, ECONNABORTED,
       EPIPE, ETIMEDOUT}
-   
-   def __init__(self, ed, filelike, *, inbufsize_start:int=1024,
-                inbufsize_max:int=0, size_need:int=0, read_r:bool=True):
+   CS_DOWN = 0
+   CS_UP = 1
+   CS_LOOKUP = 2
+   CS_CONNECT = 3
+
+   output_encoding = None
+
+   def __init__(self, *args, run_start=True, **kwargs):
+      self.state = self.CS_DOWN
+      self._outbuf = deque()
+      if (run_start):
+         self.start(*args, **kwargs)
+
+   def start(self, ed, filelike, *, inbufsize_start:int=1024, inbufsize_max:int=0, size_need:int=0, read_r:bool=True):
       self.fl = filelike
       for name in ('recv_into', 'readinto'):
          try:
@@ -98,48 +110,51 @@ class AsyncDataStream:
       self.size_need = size_need # how many bytes to read before calling input_process2()
       assert(inbufsize_start > 0)
       self._inbuf = bytearray(inbufsize_start)
-      self._outbuf = deque()
       self._inbuf_size = inbufsize_start
       self._inbuf_size_max = inbufsize_max
       self._index_in = 0        # part of buffer filled with current data
-      self.output_encoding = None
-      self.connected = True
+      self.state = self.CS_UP
       self.ssl_handshake_pending = None
       self.ssl_callback = None
    
-   @classmethod
-   def build_sock_connect(cls, ed, address, connect_callback=None, *,
-      family:int=AF_INET, type_:int=SOCK_STREAM, proto:int=0, bind_target=None,
-      **kwargs):
-      """Nonblockingly open outgoing SOCK_STREAM/SOCK_SEQPACKET connection."""
-      sock = socket_cls(family, type_, proto)
-      sock.setblocking(0)
-      s_address = address
-      if (isinstance(address[0], IPAddressBase)):
-         s_address = (str(address[0]), address[1])
+   @property
+   def connected(self):
+      return (self.state == self.CS_UP)
+   
+   def connect_async_sock_bydns(self, sa, address, port, qtypes=(QTYPE_A, QTYPE_AAAA), AFs=(socket.AF_INET, socket.AF_INET6), dns_timeout=16, **kwargs):
+      """Do a nonblocking DNS lookup and open outgoing SOCK_STREAM/SOCK_SEQPACKET connection."""
+      self.state = self.CS_LOOKUP
+      def connect(addr):
+         self._dst_ip = addr
+         self.connect_async_sock(sa.ed, addr, port, **kwargs)
       
-      if not (bind_target is None):
-         sock.bind(bind_target)
-      
+      def process_lookup_results(query, results):
+         answers = results.get_rr_ip_addresses()
+         if not answers:
+            sa.ed.set_timer(0, self._process_close, interval_relative=False)
+            return
+         
+         connect(answers[0])
+
       try:
-         sock.connect(s_address)
-      except sockerr as exc:
-         if (exc.errno == EINPROGRESS):
-            pass
-         else:
-            raise
-      self = cls(ed, sock, read_r=False, **kwargs)
-      self.connected = False
-      
+         ip = ip_address_build(address)
+      except ValueError:
+         sa.dnslm.build_simple_query(process_lookup_results, query_name=address, qtypes=qtypes, timeout=dns_timeout)
+      else:
+         connect(ip)
+         
+   
+   def connect_async_sock(self, ed, addr, port, connect_callback=None, *,
+      type_:int=SOCK_STREAM, proto:int=0, bind_target=None, **kwargs):
+      """Nonblockingly open outgoing SOCK_STREAM/SOCK_SEQPACKET connection."""
       def connect_process():
          err = sock.getsockopt(SOL_SOCKET, SO_ERROR)
          if (err):
-            _log(30, ('Async stream connection to {0} failed.'
-               'Error: {1}({2})').format(address, err, errno.errorcode[err]))
+            _log(25, ('Async stream connection to {!a}:{!a} failed. Error: {!a}({!a})').format(addr, port, err, errno.errorcode[err]))
             self._fw.write_u()
             raise CloseFD()
          
-         self.connected = True
+         self.state = self.CS_UP
          if (self.ssl_handshake_pending):
             (ssl_args, ssl_kwargs) = self.ssl_handshake_pending
             self._do_ssl_handshake(*ssl_args, **ssl_kwargs)
@@ -153,8 +168,30 @@ class AsyncDataStream:
          if not (connect_callback is None):
             connect_callback(self)
       
+      #def try_again():
+      #   return ed.set_timer(0, try_connect, interval_relative=False)
+      
+      #get_next_addr = iter(addresses).next
+      
+      sock = socket_cls(addr.AF, type_, proto)
+      sock.setblocking(0)
+      s_addr = (str(addr), port)
+      
+      if not (bind_target is None):
+         sock.bind(bind_target)
+      
+      try:
+         sock.connect(s_addr)
+      except sockerr as exc:
+         if (exc.errno == EINPROGRESS):
+            pass
+         else:
+            return
+      self.start(ed, sock, read_r=False, **kwargs)
+      self.state = self.CS_CONNECT   
       self._fw.process_writability = connect_process
       self._fw.write_r()
+
       return self
    
    def send_data(self, buffers:collections.Sequence, *args, **kwargs):
@@ -232,7 +269,7 @@ class AsyncDataStream:
          self._index_in = 0
          return
       if (count > self._index_in):
-         raise ValueError('Asked to discard {0} bytes, but only have {1} in buffer.'.format(count, self._index_in))
+         raise ValueError('Asked to discard {} bytes, but only have {} in buffer.'.format(count, self._index_in))
       self._inbuf[:self._index_in-count] = self._inbuf[count:self._index_in]
       self._index_in -= count
       
@@ -243,6 +280,10 @@ class AsyncDataStream:
          self._out = None
          self._in = None
 
+   def process_lookup_failure(self):
+      """Process FD not opening due to DNS lookup failure. The default implementation calls process_close()."""
+      return self.process_close()
+   
    def process_close(self):
       """Process FD closing; intended to be overwritten by instance user"""
       pass
@@ -526,7 +567,7 @@ class AsyncDataStream:
 
 class AsyncLineStream(AsyncDataStream):
    """Class for asynchronously accessing line-based bytestreams"""
-   def __init__(self, ed, filelike, lineseps:collections.Set=(b'\n',), **kwargs):
+   def __init__(self, ed=None, filelike=None, lineseps:collections.Set=(b'\n',), **kwargs):
       AsyncDataStream.__init__(self, ed, filelike, **kwargs)
       self._inbuf_index_l = 0
       self._ls = lineseps
@@ -607,43 +648,72 @@ class AsyncSockServer:
 
 def _selftest(out=None):
    import os
-   from . import ED_get
+   from ..service_aggregation import ServiceAggregate
    from subprocess import PIPE
    from .._debugging import streamlogger_setup; streamlogger_setup()
+   import optparse
+   op = optparse.OptionParser()
+   op.add_option('--ip', default=None, help='IP address to use for async connection test.')
+   op.add_option('--hostname', default=None, help='DNS hostname to use for async DNS/connection test.')
+   op.add_option('--port', default=80, help='Port to use for async connection tests.')
+   (opts, args) = op.parse_args()
+   
    if (out is None):
       out = sys.stdout
    
    class D1:
-      def __init__(self,l=8):
+      def __init__(self, prefix, stream, l=8):
+         self.prefix = prefix
+         self.stream = stream
          self.i = 0
          self.l = l
       def __call__(self, data, *args,**kwargs):
          self.i += 1
          
-         ads_out.send_data(('line: {0!a} {1} {2}\n'.format(data.tobytes(), args, kwargs),))
+         ads_out.send_data(('{}: {!a} {} {}\n'.format(self.prefix, data.tobytes(), args, kwargs),))
          if (self.i > self.l):
-            stream.close()
+            self.stream.close()
+      def close_log(self):
+         ads_out.send_data(('{}: !!! stream closed.\n'.format(self.prefix)))
+   
+   def shutdown(delay=0):
+      ed.set_timer(delay, ed.shutdown)
    
    def close_handler():
       d = 2
-      ads_out.send_data(('Pipe closed, will shutdown in {0} seconds\n'.format(d),))
-      ed.set_timer(d, ed.shutdown)
+      ads_out.send_data(('Pipe closed, will shutdown in {!a} seconds\n'.format(d),))
+      shutdown(d)
       
-   ed = ED_get()()
-   out.write('Using ED {0}\n'.format(ed))
+   sa = ServiceAggregate()
+   sa.add_dnslm()
+   ed = sa.ed
+   out.write('Using ED {}\n'.format(ed))
    out.write('==== AsyncLineStream test ====\n')
    def alsf(ed, stream):
       return AsyncLineStream(ed, stream, inbufsize_start=1, lineseps=(b'\n', b'\x00', b'\n'))
    
-   sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '64'), stdout=PIPE, stream_factory=alsf)
-   sp.stdout_async.process_input = D1()
+   sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '8'), stdout=PIPE, stream_factory=alsf)
+   
+   sp.stdout_async.process_input = D1('ping', sp.stdout_async)
    sp.stdout_async.process_close = close_handler
-   stream = sp.stdout_async
-   # socket testing code; commented out since it needs a suitably chatty remote
-   #sock = AsyncLineStream.build_sock_connect(ed, (('192.168.0.10',6667)))
-   #sock.process_input = D1()
-   #sock.send_data((b'test\nfoo\nbar\n',),flush=False)
-   #stream = sock
+   
+   # Socket tests: IP-based connection
+   if (opts.ip):
+      ip = ip_address_build(opts.ip)
+      sock = AsyncLineStream(run_start=False)
+      d1 = D1('TCP-ip({})'.format(str(ip)), sock)
+      sock.process_input = d1
+      sock.process_close = d1.close_log
+      sock.connect_async_sock(ed, ip, opts.port)
+      sock.send_data((b'GET\n\n',),flush=False)
+   if (opts.hostname):
+      sock = AsyncLineStream(run_start=False)
+      d1 = D1('TCP-host({!a})'.format(opts.hostname), sock)
+      sock.process_input = d1
+      sock.process_close = d1.close_log
+      sock.connect_async_sock_bydns(sa, opts.hostname, opts.port)
+      sock.send_data((b'GET\n\n',),flush=False)
+      
    ads_out = AsyncDataStream(ed, open(out.fileno(),'wb', buffering=0, closefd=False), read_r=False)
    ads_out.output_encoding = 'ascii'
    
