@@ -129,8 +129,12 @@ class AsyncDataStream:
          self.connect_async_sock(sa.ed, addr, port, **kwargs)
       
       def process_lookup_results(query, results):
-         answers = results.get_rr_ip_addresses()
+         if (results is None):
+            answers = None
+         else:
+            answers = results.get_rr_ip_addresses()
          if not answers:
+            _log(25, 'Unable to connect to {!a}:{!a}: No usable DNS records of types {!a}.'.format(address, port, qtypes))
             sa.ed.set_timer(0, self._process_close, interval_relative=False)
             return
          
@@ -655,8 +659,10 @@ def _selftest(out=None):
    op = optparse.OptionParser()
    op.add_option('--ip', default=None, help='IP address to use for async connection test.')
    op.add_option('--hostname', default=None, help='DNS hostname to use for async DNS/connection test.')
+   op.add_option('-l', default=8)
    op.add_option('--port', default=80, help='Port to use for async connection tests.')
    (opts, args) = op.parse_args()
+   count = int(opts.l)
    
    if (out is None):
       out = sys.stdout
@@ -692,9 +698,9 @@ def _selftest(out=None):
    def alsf(ed, stream):
       return AsyncLineStream(ed, stream, inbufsize_start=1, lineseps=(b'\n', b'\x00', b'\n'))
    
-   sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', '8'), stdout=PIPE, stream_factory=alsf)
+   sp = AsyncPopen(ed, ('ping', '127.0.0.1', '-c', str(count+8)), stdout=PIPE, stream_factory=alsf)
    
-   sp.stdout_async.process_input = D1('ping', sp.stdout_async)
+   sp.stdout_async.process_input = D1('ping', sp.stdout_async, count)
    sp.stdout_async.process_close = close_handler
    
    # Socket tests: IP-based connection
