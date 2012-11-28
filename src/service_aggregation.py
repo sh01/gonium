@@ -57,7 +57,7 @@ class ServiceAggregate:
 # Ugly workaround for cyclical inter-file dependencies
 from .posix.signal import EMSignalCatcher
 from .posix.blockfd import DataTransferDispatcher
-from .dns_resolving import ResolverConfig
+from .dns_resolving.stub import ResolverConfig
 
 def _selftest():
    sa = ServiceAggregate()

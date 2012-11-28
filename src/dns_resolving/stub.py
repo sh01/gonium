@@ -15,346 +15,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+from collections import deque
 import logging
 import struct
 import socket
 from io import BytesIO
 import random
 
-from . import ip_address
-from .ip_address import IPAddressV4, IPAddressV6, ip_address_build
-from .fdm.packet import AsyncPacketSock
-
-CLASS_IN = 1
-CLASS_CS = 2
-CLASS_CH = 3
-CLASS_HS = 4
-
-QTYPE_AXFR = 252
-QTYPE_MAILB = 253
-QTYPE_MAILA = 254
-QTYPE_ALL = 255
-
-QTYPES_SPECIAL = set((QTYPE_AXFR, QTYPE_MAILB, QTYPE_MAILA, QTYPE_ALL))
-
-
-class DomainName(bytes):
-   NAME_LENGTH_LIMIT = 255
-   LABEL_LENGTH_LIMIT = 63
-   COMP_DEPTH_LIMIT = 256
-   def __init__(self, *args, **kwargs):
-      bytes.__init__(self)
-      if (len(self) > self.NAME_LENGTH_LIMIT):
-         raise ValueError('{!a} is longer than {!a}, which is the maximum length allowed for domain names'.format(self, self.NAME_LENGTH_LIMIT))
-      self.binstring = self.__binary_repr_compute()
-   
-   @classmethod
-   def build_from_binstream(cls, binstream):
-      """Build domain name from binary representation in DNS protocol"""
-      elements = []
-      stream_pos = None
-      comp_depth = 0
-      try:
-         while (True):
-            l_str = binstream.read(1)
-            if (l_str == b''):
-               raise ValueError('Insufficient data in binstream')
-         
-            (l,) = struct.unpack(b'>B', l_str)
-            if (l > cls.LABEL_LENGTH_LIMIT):
-               if (l >= 192):
-                  offset = l - 192
-                  offset *= 256
-                  l_str2 = binstream.read(1)
-                  if (l_str2 == b''):
-                     raise ValueError('Insufficient data in binstream: missing second byte of compression offset')
-                  (l2,) = struct.unpack(b'>B', l_str2)
-                  offset += l2
-                  
-                  comp_depth += 1
-                  if (comp_depth > cls.COMP_DEPTH_LIMIT):
-                     if (not stream_pos is None):
-                        binstream.seek(stream_pos)
-                     raise ValueError('Compression depth limit {} exceeded.'.format(cls.COMP_DEPTH_LIMIT))
-                  if (stream_pos is None):
-                     stream_pos = binstream.tell()
-                  binstream.seek(offset)
-                  continue
-               raise ValueError('Label length {} in stream is greater than allowed maximum {}.'.format(l, cls.LABEL_LENGTH_LIMIT))
-         
-            label = binstream.read(l)
-            if (len(label) != l):
-               raise ValueError('Insufficient data in stream for label of length {}.'.format(l,))
-            elements.append(label)
-            if (len(label) == 0):
-               break
-      finally:
-         if (not stream_pos is None):
-            binstream.seek(stream_pos)
-      
-      if (len(elements) < 1):
-         raise ValueError('Insufficient labels in binstream.')
-      if (not (elements[-1] == b'')):
-         raise ValueError('Terminating label of binstream has non-zero length.')
-      del(elements[-1])
-      
-      if (b'' in elements):
-         raise ValueError('Binstream contains empty label before last label.')
-      
-      return cls(b'.'.join(elements))
-      
-   def __binary_repr_compute(self):
-      """Compute and return binary representation of this domain name in DNS protocol"""
-      elements = self.split(b'.')
-      if (elements[-1] == b''):
-         del(elements[-1])
-      
-      if (b'' in elements):
-         raise ValueError('Empty label in {}'.format(self,))
-      
-      elements.append(b'')
-      
-      for element in elements:
-         if not (len(element) <= self.LABEL_LENGTH_LIMIT):
-            raise ValueError('Element {} of name {} is longer than 63 octets'.format(element,name))
-      
-      rv = b''.join(((struct.pack(b'>B', len(e)) + e) for e in elements))
-      return rv
-      
-   def binary_repr(self):
-      """Return binary representation of this domain name in DNS protocol"""
-      return self.binstring
-
-   def __cmp__(self, other):
-      """Case-insensitive comparison as manadated by RFC 1035"""
-      s1 = str(self.lower())
-      s2 = str(other.lower())
-      if (s1 < s2):
-         return -1
-      if (s1 > s2):
-         return 1
-      return 0
-
-
-class DNSReprBase(object):
-   def __repr__(self):
-      return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={!a}'.format(name,getattr(self,name)) for name in self.fields]))
-
-   def __eq__(self, other):
-      return (self.binary_repr() == other.binary_repr())
-   
-   def __neq__(self, other):
-      return (not (self == other))
-
-# ----------------------------------------------------------------------------- RDATA sections
-
-class RDATA(DNSReprBase):
-   RDATA_TYPES = {}
-   fields = ('rdata',)
-   def __init__(self, *args, **kwargs):
-      fields = list(self.fields)[:]
-      for key in kwargs:
-         if not (key in fields):
-            raise TypeError('Unexpected keyword argument {!a}'.format(key))
-         fields.remove(key)
-         setattr(self, key, kwargs[key])
-      
-      if (len(fields) != len(args)):
-         raise TypeError('Got {} non-keyword arguments, expected {} (given {} keyword arguments).'.format(len(args), len(fields), len(kwargs)))
-      
-      for i in range(len(fields)):
-         setattr(self, fields[i], args[i])
-   
-   def data_get(self):
-      """Return local representation of data stored in this instace"""
-      if (len(self.fields) == 1):
-         return getattr(self, self.fields[0])
-      
-      return tuple([getattr(self, attr) for attr in self.fields])
-   
-   def binary_repr(self):
-      """Return binary representation of this RDATA in DNS protocol"""
-      return self.rdata
-   
-   @staticmethod
-   def rdata_read(binstream, rdlength):
-      rdata = binstream.read(rdlength)
-      if (len(rdata) < rdlength):
-         raise ValueError('Insufficient data in binstream')
-      
-      return rdata
-
-   @classmethod
-   def build_from_binstream(cls, *args, **kwargs):
-      return cls(cls.rdata_read(*args, **kwargs))
-
-   @classmethod
-   def rdata_type_register(cls, rdata_type):
-      cls.RDATA_TYPES[rdata_type.type] = rdata_type
-      return rdata_type
-   
-   @classmethod
-   def class_get(cls, rtype):
-      if (rtype in cls.RDATA_TYPES):
-         return cls.RDATA_TYPES[rtype]
-      return RDATA
-
-
-@RDATA.rdata_type_register
-class RDATA_A(RDATA):
-   type = 1
-   fields = ('ip',)
-   def binary_repr(self):
-      """Return binary representation of this RDATA in DNS protocol"""
-      return struct.pack('>I', int(self.ip))
-   
-   @classmethod
-   def build_from_binstream(cls, binstream, rdlength):
-      rdata = cls.rdata_read(binstream, rdlength)
-      if (len(rdata) != 4):
-         raise ValueError('Rdata {!a} has invalid length; expected 4 octets.'.format(rdata,))
-      ip = IPAddressV4(struct.unpack('>I', rdata)[0])
-      return cls(ip)
-
-
-class RDATA_DomainName(RDATA):
-   fields = ('domain_name',)
-   def binary_repr(self):
-      """Return binary representation of this RDATA in DNS protocol"""
-      return DomainName(self.domain_name).binary_repr()
-   
-   @classmethod
-   def build_from_binstream(cls, binstream, rdlength):
-      pos = binstream.tell()
-      rdata = cls.rdata_read(binstream, rdlength)
-      pos_end = binstream.tell()
-      binstream.seek(pos)
-      domain_name = DomainName.build_from_binstream(binstream)
-      if not (pos_end == binstream.tell()):
-         raise ValueError('Rdata {!a} is not a valid domain name.'.format(rdata,))
-      return cls(domain_name)
-
-
-@RDATA.rdata_type_register
-class RDATA_NS(RDATA_DomainName):
-   type = 2
-
-@RDATA.rdata_type_register
-class RDATA_CNAME(RDATA_DomainName):
-   type = 5
-
-@RDATA.rdata_type_register
-class RDATA_SOA(RDATA):
-   type = 6
-   fields = ('mname', 'rname', 'serial', 'refresh', 'retry', 'expire', 'minimum')
-   def binary_repr(self):
-      """Return binary representation of this RDATA in DNS protocol"""
-      mname_str = DomainName(self.mname).binary_repr()
-      rname_str = DomainName(self.rname).binary_repr()
-      return ('%s%s%s' % (mname_str, rname_str, struct.pack('>IIIII', self.serial, 
-         self.refresh, self.retry, self.expire, self.minimum)))
-   
-   @classmethod
-   def build_from_binstream(cls, binstream, rdlength):
-      pos = binstream.tell()
-      rdata = cls.rdata_read(binstream, rdlength)
-      pos_end = binstream.tell()
-      binstream.seek(pos)
-      mname = DomainName.build_from_binstream(binstream)
-      rname = DomainName.build_from_binstream(binstream)
-      srrem_str = binstream.read(20)
-      if (len(srrem_str) != 20):
-         raise ValueError('Rdata {!a} is not a valid SOA record'.format(rdata,))
-      
-      if not (pos_end == binstream.tell()):
-         raise ValueError('Rdata {!a} is not a valid SOA record.'.format(rdata,))
-      
-      
-      (serial, refresh, retry, expire, minimum) = \
-         struct.unpack('>IIIII', srrem_str)
-      
-      return cls(mname, rname, serial, refresh, retry, expire, minimum)
-
-@RDATA.rdata_type_register
-class RDATA_PTR(RDATA_DomainName):
-   type = 12
-
-@RDATA.rdata_type_register
-class RDATA_MX(RDATA):
-   type = 15
-   fields = ('preference', 'hostname')
-   def binary_repr(self):
-      """Return binary representation of this RDATA in DNS protocol"""
-      return ('%s%s' % (struct.pack('>H', self.preference),
-         DomainName(self.hostname).binary_repr()))
-   
-   @classmethod
-   def build_from_binstream(cls, binstream, rdlength):
-      pos = binstream.tell()
-      rdata = cls.rdata_read(binstream, rdlength)
-      pos_end = binstream.tell()
-      binstream.seek(pos)
-      pref_str = binstream.read(2)
-      if (len(pref_str) < 2):
-         raise ValueError('Rdata {!a} is not a valid MX record.'.format(rdata,))
-      
-      hostname = DomainName.build_from_binstream(binstream)
-      if not (pos_end == binstream.tell()):
-         raise ValueError('Rdata {!a} is not a valid MX record.'.format(rdata,))
-      
-      (preference,) = struct.unpack('>H', pref_str)
-      return cls(preference, hostname)
-
-@RDATA.rdata_type_register
-class RDATA_TXT(RDATA):
-   type = 16
-   fields = ('txt_data',)
-   def __init__(self, txt_data):
-      self.txt_data = txt_data
-      for txt in txt_data:
-         if (len(txt) > 255):
-            raise ValueError('TXT fragment {!a} is too long (maximum is 255 bytes).'.format(txt))
-
-   def binary_repr(self):
-      """Return binary representation of this RDATA in DNS protocol"""
-      for txt in self.txt_data:
-         if (len(txt) > 255):
-            raise ValueError('Txt fragment {!a} is too long.'.format(txt,))
-      return b''.join((struct.pack(b'>B', len(txt)) + txt) for txt in
-         self.txt_data)
-   
-   @classmethod
-   def build_from_binstream(cls, binstream, rdlength):
-      rdata = cls.rdata_read(binstream, rdlength)
-      i = 0
-      txt_data = []
-      while (i < rdlength):
-         (slen,) = struct.unpack(b'>B', rdata[i:i+1])
-         j = i + 1 + slen
-         txt = rdata[i+1:j]
-         if (len(txt) < slen):
-            raise ValueError('Rdata {!a} is not a valid TXT record'.format(rdata,))
-         txt_data.append(txt)
-         i = j
-      
-      return cls(tuple(txt_data))
-
-# RFC 3596
-@RDATA.rdata_type_register
-class RDATA_AAAA(RDATA):
-   type = 28
-   fields = ('ip',)
-   def binary_repr(self):
-      """Return binary representation of this RDATA in DNS protocol"""
-      return socket.inet_pton(socket.AF_INET6, str(self.ip))
-   
-   @classmethod
-   def build_from_binstream(cls, binstream, rdlength):
-      if (rdlength != 16):
-         raise ValueError('Length of AAAA record must be 16 octets; got {!a}.'.format(rdlength,))
-      rdata = cls.rdata_read(binstream, rdlength)
-      ip = IPAddressV6.fromstring(socket.inet_ntop(socket.AF_INET6, rdata))
-      return cls(ip)
+from .base import *
+from .. import ip_address
+from ..ip_address import ip_address_build
+from ..fdm.packet import AsyncPacketSock
 
 
 # ----------------------------------------------------------------------------- question / RR sections
@@ -616,7 +287,9 @@ class DNSQuery:
       if not (self.la is None):
          self.la.query_forget(self)
          self.la = None
-
+   
+   def get_dns_frame(self):
+      return DNSFrame(questions=(self.question,), id=self.id)
 
 class ResolverConfig:
    DEFAULT_FN = '/etc/resolv.conf'
@@ -677,13 +350,46 @@ class DNSLookupManager:
          addr_family = ip_addr.AF
       
       sock = socket.socket(addr_family, socket.SOCK_DGRAM)
-      self.sock = AsyncPacketSock(self.event_dispatcher, sock)
-      self.sock.process_input = self.data_process
-      self.sock.process_close = self.close_process
+      self.sock_udp = AsyncPacketSock(self.event_dispatcher, sock)
+      self.sock_udp.process_input = self.data_process
+      self.sock_udp.process_close = self.close_process
+      self.sock_tcp = None
+      self.sock_tcp_connected = False
+      self._qq_tcp = deque()
       
       # Normalize ns_addr argument
       self.ns_addr = (str(ip_addr), int(ns_addr[1]))
       self.queries = {}
+   
+   def _have_tcp_connection(self):
+      s = self.sock_tcp
+      return (s and (s.state == s.CS_UP))
+   
+   def _send_tcp(self, query):
+      if (self._have_tcp_connection()):
+        self.sock_tcp.send_query(query)
+      else:
+        if (self.sock_tcp is None):
+          self._make_tcp_sock()
+        self._qq_tcp.append(query)
+        return 
+
+   def _make_tcp_sock(self):
+      self.sock_tcp = rv = DNSTCPStream(run_start=False)
+      rv.process_close = self._process_tcp_close
+      rv.connect_async_sock(self.ns_addr[0], int(self.ns_addr[1]), connect_callback=self._process_tcp_connect)
+   
+   def _process_tcp_connect(self):
+      for query in self._qq_tcp:
+        self.sock_tcp.send_query(query)
+      self._qq_tcp.clear()
+
+   def _process_tcp_close(self):
+      self.sock_tcp = None
+   
+   def _process_tcp_msgs(self, msgs):
+      for msg in msgs:
+        self.data_process(msg, self.ns_addr)
    
    def data_process(self, data, source):
       try:
@@ -716,8 +422,7 @@ class DNSLookupManager:
    
    def query_add(self, query):
       """Register new outstanding dns query and send query frame"""
-      dns_frame = DNSFrame(questions=(query.question,), id=query.id)
-      dns_frame_str = dns_frame.binary_repr()
+      dns_frame_str = query.get_dns_frame().binary_repr()
       
       if (not (query.id in self.queries)):
          self.queries[query.id] = []
@@ -729,25 +434,25 @@ class DNSLookupManager:
       
       query_list.append(query)
       
-      self.sock.fl.sendto(dns_frame_str, self.ns_addr)
+      self.sock_udp.fl.sendto(dns_frame_str, self.ns_addr)
    
    def close_process(self, fd):
       """Process close of UDP socket"""
-      if not (fd == self.sock.fd):
+      if not (fd == self.sock_udp.fd):
          raise ValueError('{!a} is not responsible for fd {!a}'.fomat(self, fd))
       
       if (not self.cleaning_up):
          self.log(30, 'UDP socket of {!a} is unexpectedly being closed.' % (self,))
-         self.sock = None
+         self.sock_udp = None
          # Don't raise an exception here; this is most likely being called as a
          # result of another exception, which we wouldn't want to mask.
    
    def clean_up(self):
       """Shutdown instance, if still active"""
       self.cleaning_up = True
-      if not (self.sock is None):
-         self.sock.clean_up()
-         self.sock = None
+      if not (self.sock_udp is None):
+         self.sock_udp.clean_up()
+         self.sock_udp = None
       for query_list in self.queries.values():
          for query in query_list[:]:
             query.failure_report()
@@ -799,11 +504,12 @@ class SimpleDNSQuery:
    def __init__(self, lookup_manager, result_handler, query_name, qtypes, timeout):
       if (isinstance(query_name, str)):
          query_name = query_name.encode('ascii')
+
+      if (query_name.endswith(b'.') and not query_name.endswith(b'..')):
+         query_name = query_name[:-1]
       query_name = DomainName(query_name)
       self.lookup_manager = lookup_manager
       self.result_handler = result_handler
-      if (query_name.endswith(b'.') and not query_name.endswith(b'..')):
-         query_name = query_name[:-1]
       self.query_name = query_name
       self.qtypes = qtypes
       self.results = []
@@ -872,114 +578,32 @@ class SimpleDNSQuery:
       self.result_handler = None
       self.lookup_manager = None
 
-QTYPE_A = RDATA_A.type
-QTYPE_AAAA = RDATA_AAAA.type
-# ----------------------------------------------------------------------------- selftest code
 
-def _module_selftest_local():
-   question_1 = DNSQuestion(DomainName(b'www.example.net'),QTYPE_A,1)
-   question_2 = DNSQuestion(DomainName(b'example.net'),QTYPE_AAAA,1)
+from ..fdm.stream import AsyncDataStream
+class DNSTCPStream(AsyncDataStream):
+   def __init__(self, *args, **kwargs):
+      super().__init__(*args, **kwargs)
+      self.size = 2
    
-   f1_0 = DNSFrame(questions=[question_1, question_2],id=1234)
-   r1_0 = f1_0.binary_repr()
-   f1_1 = DNSFrame.build_from_binstream(BytesIO(r1_0))
-   r1_1 = f1_1.binary_repr()
-   if (r1_0 != r1_1):
-      raise StandardError('Idempotency test 01 failed.')
-   
-   answer_1 = ResourceRecord(name=DomainName(b'www.example.net'), rtype=RDATA_AAAA.type, 
-      rdata=RDATA_AAAA(ip_address.ip_address_build(b'::1')), ttl=0)
-   answer_2 = ResourceRecord(name=DomainName(b'www.example.net'), rtype=RDATA_A.type, 
-      rdata=RDATA_A(ip_address.ip_address_build(b'127.0.0.1')), ttl=0)
-   
-   f2_0 = DNSFrame(questions=[question_1, question_2], answers=[answer_1, answer_2], ar=[answer_1, answer_2], id=1235)
-   r2_0 = f2_0.binary_repr()
-   f2_1 = DNSFrame.build_from_binstream(BytesIO(r2_0))
-   r2_1 = f2_1.binary_repr()
+   def process_input(self, data):
+      bytes_used = 0
+      bytes_left = len(data)
+      msgs = []
+      while (bytes_left > 2):
+        l = struct.unpack('>H', data[bytes_used:bytes_used+2])
+        wb = l + 2
+        if (wb > bytes_left):
+          self.size = wb
+          break
+        msgs.append(data[bytes_used:bytes_used+wb])
+        bytes_used += wb
+      else:
+         self.size = 2
+      self.discard_bytes(bytes_used)
+      
+      if (msgs):
+         self.process_msgs(msgs)
 
-   if (r2_0 != r2_1):
-      raise StandardError('Idempotency test 02 failed.')
-   return True
+   def send_query(self, query):
+      self.send_bytes(query.get_dns_frame().binary_repr())
 
-
-def _module_selftest_network(ns_addr):
-   af = ip_address_build(ns_addr[0]).AF
-   s = socket.socket(af, socket.SOCK_DGRAM)
-   query_data = DNSFrame(questions=[DNSQuestion(DomainName(b'www.example.net'), QTYPE_ALL)], id=1236).binary_repr()
-
-   s.sendto(query_data, ns_addr)
-   print('Sending query {!a} to {!a}...'.format(query_data, ns_addr,))
-   (in_data, in_addr) = s.recvfrom(512)
-   print('Got reply {!a} from {!a}.'.format(in_data, in_addr))
-   
-   response_data = DNSFrame.build_from_binstream(BytesIO(in_data))
-   print('Data: {!a}'.format(response_data))
-   return True
-
-
-class _StatefulLookupTester_1:
-   def __init__(self, ed, blm, question):
-      self.ed = ed
-      self.la = blm(self.ed)
-      self.query = DNSQuery(self.la, self.result_handler, id=42, question=question, timeout=20)
-      self.ed.event_loop()
-   
-   def result_handler(self, dns_query, dns_data):
-      print('Got response: {!a}'.format(dns_data,))
-      self.ed.shutdown()
-
-class _StatefulLookupTester_2:
-   def __init__(self, ed, blm, questionstring, qtypes):
-      self.ed = ed
-      self.la = blm(self.ed)
-      self.query = SimpleDNSQuery(self.la, self.result_handler, questionstring, qtypes, timeout=20)
-      self.ed.event_loop()
-   
-   def result_handler(self, dns_query, dns_data):
-      print('Got response: {!a}'.format(dns_data,))
-      print('Ipv4/IPv6 addresses: {!a}'.format(dns_data.get_rr_ip_addresses(),))
-      self.ed.shutdown()
-
-
-def _module_selftest_stateful_network(blm):
-   from .fdm import ED_get
-   ED = ED_get()
-   q1 = _StatefulLookupTester_1(ED(), blm, DNSQuestion(DomainName(b'www.example.net'),QTYPE_ALL))
-   q2 = _StatefulLookupTester_2(ED(), blm, b'sixxs.net', qtypes=(QTYPE_A, QTYPE_AAAA))
-
-
-def _selftest():
-   from ._debugging import streamlogger_setup; streamlogger_setup()
-   import optparse
-   
-   op = optparse.OptionParser()
-   op.add_option('--ns_ip', default=None, help='Set nameserver IP to this value instead of parsing from config.')
-   op.add_option('--ns_port', default=53, help='Nameserver port to use in conjunction with ns_ip.')
-   op.add_option('--config_fn', default='/etc/resolv.conf', help='Path of resolv.conf to use.')
-   
-   (opts, args) = op.parse_args()
-   if (opts.ns_ip):
-      ns_addr = (opts.ns_ip, int(opts.ns_port))
-      def blm(*args):
-         return DNSLookupManager(*args, ns_addr=ns_addr)
-   else:
-      rc = ResolverConfig.build_from_file(opts.config_fn)
-      ns_addr = rc.get_addr()
-      blm = rc.build_lookup_manager
-   
-   print('==== Testing stateless components, locally only')
-   _module_selftest_local()
-   print('...test done.\n')
-   
-   print('==== Testing stateless components, using network connections')
-   _module_selftest_network(ns_addr)
-   print('...test done.\n')
-   
-   print('==== Testing stateful components, using network connections (if this hangs, you probably have a problem)')
-   _module_selftest_stateful_network(blm)
-   print('...test done.\n')
-   
-   print('Self-test passed.')
-
-if (__name__ == '__main__'):
-   _selftest()

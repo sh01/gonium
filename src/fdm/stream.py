@@ -32,7 +32,7 @@ from select import poll, POLLOUT
 from socket import socket as socket_cls, AF_INET, SOCK_STREAM, SOL_SOCKET, \
    SO_ERROR, error as sockerr
 
-from ..dns_resolving import QTYPE_A, QTYPE_AAAA
+from ..dns_resolving.base import QTYPE_A, QTYPE_AAAA
 from ..ip_address import IPAddressBase, ip_address_build
 from .exceptions import CloseFD
 

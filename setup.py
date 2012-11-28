@@ -45,7 +45,7 @@ setup(name='gonium',
    author='Sebastian Hagen',
    author_email='sebastian_hagen@memespace.net',
    url='http://git.memespace.net/git/gonium.git',
-   packages=('gonium', 'gonium.fdm', 'gonium.hacks', 'gonium.fdm.ed', 'gonium.posix', 'gonium.linux'),
+   packages=('gonium', 'gonium.fdm', 'gonium.dns_resolving', 'gonium.hacks', 'gonium.fdm.ed', 'gonium.posix', 'gonium.linux'),
    ext_modules=ext_modules,
    package_dir={'gonium':'src'}
 )
