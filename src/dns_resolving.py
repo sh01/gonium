@@ -809,6 +809,8 @@ class SimpleDNSQuery:
       query_name = DomainName(query_name)
       self.lookup_manager = lookup_manager
       self.result_handler = result_handler
+      if (query_name.endswith(b'.') and not query_name.endswith(b'..')):
+         query_name = query_name[:-1]
       self.query_name = query_name
       self.qtypes = qtypes
       self.results = []
