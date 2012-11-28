@@ -45,8 +45,7 @@ class DomainName(bytes):
    def __init__(self, *args, **kwargs):
       bytes.__init__(self)
       if (len(self) > self.NAME_LENGTH_LIMIT):
-         raise ValueError('{0!a} is longer than {0!a}, which is the maximum'
-        'length allowed for domain names'.format(self, self.NAME_LENGTH_LIMIT))
+         raise ValueError('{!a} is longer than {!a}, which is the maximum length allowed for domain names'.format(self, self.NAME_LENGTH_LIMIT))
       self.binstring = self.__binary_repr_compute()
    
    @classmethod
@@ -76,16 +75,16 @@ class DomainName(bytes):
                   if (comp_depth > cls.COMP_DEPTH_LIMIT):
                      if (not stream_pos is None):
                         binstream.seek(stream_pos)
-                     raise ValueError('Compression depth limit {0} exceeded.'.format(cls.COMP_DEPTH_LIMIT))
+                     raise ValueError('Compression depth limit {} exceeded.'.format(cls.COMP_DEPTH_LIMIT))
                   if (stream_pos is None):
                      stream_pos = binstream.tell()
                   binstream.seek(offset)
                   continue
-               raise ValueError('Label length {0} in stream is greater than allowed maximum {1}.'.format(l, cls.LABEL_LENGTH_LIMIT))
+               raise ValueError('Label length {} in stream is greater than allowed maximum {}.'.format(l, cls.LABEL_LENGTH_LIMIT))
          
             label = binstream.read(l)
             if (len(label) != l):
-               raise ValueError('Insufficient data in stream for label of length {0}.'.format(l,))
+               raise ValueError('Insufficient data in stream for label of length {}.'.format(l,))
             elements.append(label)
             if (len(label) == 0):
                break
@@ -111,13 +110,13 @@ class DomainName(bytes):
          del(elements[-1])
       
       if (b'' in elements):
-         raise ValueError('Empty label in {0}'.format(self,))
+         raise ValueError('Empty label in {}'.format(self,))
       
       elements.append(b'')
       
       for element in elements:
          if not (len(element) <= self.LABEL_LENGTH_LIMIT):
-            raise ValueError('Element {0} of name {1} is longer than 63 octets'.format(element,name))
+            raise ValueError('Element {} of name {} is longer than 63 octets'.format(element,name))
       
       rv = b''.join(((struct.pack(b'>B', len(e)) + e) for e in elements))
       return rv
@@ -139,7 +138,7 @@ class DomainName(bytes):
 
 class DNSReprBase(object):
    def __repr__(self):
-      return '{0}({1})'.format(self.__class__.__name__, ', '.join(['{0}={1!a}'.format(name,getattr(self,name)) for name in self.fields]))
+      return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={!a}'.format(name,getattr(self,name)) for name in self.fields]))
 
    def __eq__(self, other):
       return (self.binary_repr() == other.binary_repr())
@@ -156,13 +155,12 @@ class RDATA(DNSReprBase):
       fields = list(self.fields)[:]
       for key in kwargs:
          if not (key in fields):
-            raise TypeError('Unexpected keyword argument {0!a}'.format(key))
+            raise TypeError('Unexpected keyword argument {!a}'.format(key))
          fields.remove(key)
          setattr(self, key, kwargs[key])
       
       if (len(fields) != len(args)):
-         raise TypeError('Got {0} non-keyword arguments, expected {1} (given'
-         '{2} keyword arguments).'.format(len(args), len(fields), len(kwargs)))
+         raise TypeError('Got {} non-keyword arguments, expected {} (given {} keyword arguments).'.format(len(args), len(fields), len(kwargs)))
       
       for i in range(len(fields)):
          setattr(self, fields[i], args[i])
@@ -214,7 +212,7 @@ class RDATA_A(RDATA):
    def build_from_binstream(cls, binstream, rdlength):
       rdata = cls.rdata_read(binstream, rdlength)
       if (len(rdata) != 4):
-         raise ValueError('Rdata {0!a} has invalid length; expected 4 octets.'.format(rdata,))
+         raise ValueError('Rdata {!a} has invalid length; expected 4 octets.'.format(rdata,))
       ip = IPAddressV4(struct.unpack('>I', rdata)[0])
       return cls(ip)
 
@@ -233,7 +231,7 @@ class RDATA_DomainName(RDATA):
       binstream.seek(pos)
       domain_name = DomainName.build_from_binstream(binstream)
       if not (pos_end == binstream.tell()):
-         raise ValueError('Rdata {0!a} is not a valid domain name.'.format(rdata,))
+         raise ValueError('Rdata {!a} is not a valid domain name.'.format(rdata,))
       return cls(domain_name)
 
 
@@ -266,10 +264,10 @@ class RDATA_SOA(RDATA):
       rname = DomainName.build_from_binstream(binstream)
       srrem_str = binstream.read(20)
       if (len(srrem_str) != 20):
-         raise ValueError('Rdata {0!a} is not a valid SOA record'.format(rdata,))
+         raise ValueError('Rdata {!a} is not a valid SOA record'.format(rdata,))
       
       if not (pos_end == binstream.tell()):
-         raise ValueError('Rdata {0!a} is not a valid SOA record.'.format(rdata,))
+         raise ValueError('Rdata {!a} is not a valid SOA record.'.format(rdata,))
       
       
       (serial, refresh, retry, expire, minimum) = \
@@ -298,11 +296,11 @@ class RDATA_MX(RDATA):
       binstream.seek(pos)
       pref_str = binstream.read(2)
       if (len(pref_str) < 2):
-         raise ValueError('Rdata {0!a} is not a valid MX record.'.format(rdata,))
+         raise ValueError('Rdata {!a} is not a valid MX record.'.format(rdata,))
       
       hostname = DomainName.build_from_binstream(binstream)
       if not (pos_end == binstream.tell()):
-         raise ValueError('Rdata {0!a} is not a valid MX record.'.format(rdata,))
+         raise ValueError('Rdata {!a} is not a valid MX record.'.format(rdata,))
       
       (preference,) = struct.unpack('>H', pref_str)
       return cls(preference, hostname)
@@ -315,13 +313,13 @@ class RDATA_TXT(RDATA):
       self.txt_data = txt_data
       for txt in txt_data:
          if (len(txt) > 255):
-            raise ValueError('TXT fragment {0!a} is too long (maximum is 255 bytes).'.format(txt))
+            raise ValueError('TXT fragment {!a} is too long (maximum is 255 bytes).'.format(txt))
 
    def binary_repr(self):
       """Return binary representation of this RDATA in DNS protocol"""
       for txt in self.txt_data:
          if (len(txt) > 255):
-            raise ValueError('Txt fragment {0!a} is too long.'.format(txt,))
+            raise ValueError('Txt fragment {!a} is too long.'.format(txt,))
       return b''.join((struct.pack(b'>B', len(txt)) + txt) for txt in
          self.txt_data)
    
@@ -335,7 +333,7 @@ class RDATA_TXT(RDATA):
          j = i + 1 + slen
          txt = rdata[i+1:j]
          if (len(txt) < slen):
-            raise ValueError('Rdata {0!a} is not a valid TXT record'.format(rdata,))
+            raise ValueError('Rdata {!a} is not a valid TXT record'.format(rdata,))
          txt_data.append(txt)
          i = j
       
@@ -353,7 +351,7 @@ class RDATA_AAAA(RDATA):
    @classmethod
    def build_from_binstream(cls, binstream, rdlength):
       if (rdlength != 16):
-         raise ValueError('Length of AAAA record must be 16 octets; got {0!a}.'.format(rdlength,))
+         raise ValueError('Length of AAAA record must be 16 octets; got {!a}.'.format(rdlength,))
       rdata = cls.rdata_read(binstream, rdlength)
       ip = IPAddressV6.fromstring(socket.inet_ntop(socket.AF_INET6, rdata))
       return cls(ip)
@@ -369,12 +367,12 @@ class ValueVerifier:
    @classmethod
    def name_validate(cls, name):
       if not (cls.NAME_MIN <= len(name) <= cls.NAME_MAX):
-         raise ValueError('NAME {0!a} is invalid'.format(name,))
+         raise ValueError('NAME {!a} is invalid'.format(name,))
    
    @classmethod
    def type_validate(cls, rtype):
       if not (cls.TYPE_MIN <= int(rtype) <= cls.TYPE_MAX):
-         raise ValueError('TYPE {0!a} is invalid'.format(rtype,))
+         raise ValueError('TYPE {!a} is invalid'.format(rtype,))
 
 
 class DNSQuestion(ValueVerifier, DNSReprBase):
@@ -480,8 +478,7 @@ class DNSHeader(DNSReprBase):
    @staticmethod
    def limit_verify(limit_min, limit_max, val):
       if not (limit_min <= val <= limit_max):
-         raise ValueError('Expected value to lie between {0} and {1}; got {2}'
-                          'instead.'.format(limit_min, limit_max, val))
+         raise ValueError('Expected value to lie between {} and {}; got {!a} instead.'.format(limit_min, limit_max, val))
 
    @classmethod
    def build_from_binstream(cls, binstream):
@@ -494,7 +491,7 @@ class DNSHeader(DNSReprBase):
    @classmethod
    def build_from_binstring(cls, binstring):
       if (len(binstring) != 12):
-         raise ValueError('Binstring {0!a} has invalid length'.format(binstring,))
+         raise ValueError('Binstring {!a} has invalid length'.format(binstring,))
       
       (id, flags_1, flags_2, qdcount, ancount, nscount, arcount) = \
          struct.unpack(b'>HBBHHHH', binstring)
@@ -572,7 +569,7 @@ class DNSQuery:
    response_frame will be None iff the query timeouted."""
    def __init__(self, lookup_manager, result_handler, id, question, timeout):
       if (not hasattr(question.binary_repr,'__call__')):
-         raise ValueError('Value {0!a} for argument question is invalid'.format(question,))
+         raise ValueError('Value {!a} for argument question is invalid'.format(question,))
       
       self.id = id
       self.result_handler = result_handler
@@ -673,7 +670,7 @@ class DNSLookupManager:
       self.event_dispatcher = event_dispatcher
       self.cleaning_up = False
       if (not (len(ns_addr) == 2)):
-         raise ValueError('Argument ns_addr should have two elements; got {0!a}'.format(ns_addr,))
+         raise ValueError('Argument ns_addr should have two elements; got {!a}'.format(ns_addr,))
       
       ip_addr = ip_address.ip_address_build(ns_addr[0])
       if (addr_family is None):
@@ -692,27 +689,22 @@ class DNSLookupManager:
       try:
          dns_frame = DNSFrame.build_from_binstream(BytesIO(data))
       except ValueError:
-         self.log(30, '{0!a} got udp frame {1!a} not parsable as dns data from'
-            '{2!a}. Ignoring. Parsing error was:'.format(self, data, source),
-            exc_info=True)
+         self.log(30, '{!a} got udp frame {!a} not parsable as dns data from {!a}. Ignoring. Parsing error was:'.format(self, data, source), exc_info=True)
          return
       
       if (source != self.ns_addr):
-         self.log(30, '{0!a} got spurious udp frame from {1!a}; target NS is'
-            'at {2!a}. Ignoring.'.format(self, source, self.ns_addr))
+         self.log(30, '{!a} got spurious udp frame from {!a}; target NS is at {!a}. Ignoring.'.format(self, source, self.ns_addr))
          return
       
       if (not (dns_frame.header.id in self.queries)):
-         self.log(30, '{0!a} got spurious (unexpected id) query dns response'
-            '{1!a} from {2!a}. Ignoring.'.format(self, dns_frame, source))
+         self.log(30, '{!a} got spurious (unexpected id) query dns response {!a} from {!a}. Ignoring.'.format(self, dns_frame, source))
       
       for query in self.queries[dns_frame.header.id][:]:
          if (query.potential_response_process(dns_frame)):
             self.queries[dns_frame.header.id].remove(query)
             break
       else:
-         self.log(30, '{0!a} got spurious (unexpected question section) query'
-            'dns response {1!a} from {2!a}. Ignoring.'.format(self, dns_frame, source))
+         self.log(30, '{!a} got spurious (unexpected question section) query dns response {!a} from {!a}. Ignoring.'.format(self, dns_frame, source))
    
    def query_forget(self, query):
       """Forget outstanding dns query"""
@@ -733,7 +725,7 @@ class DNSLookupManager:
       query_list = self.queries[query.id]
       
       if (query in query_list):
-         raise ValueError('query {0!a} is already registered with {1!a}.'.format(query, self))
+         raise ValueError('query {!a} is already registered with {!a}.'.format(query, self))
       
       query_list.append(query)
       
@@ -742,10 +734,10 @@ class DNSLookupManager:
    def close_process(self, fd):
       """Process close of UDP socket"""
       if not (fd == self.sock.fd):
-         raise ValueError('{0!a} is not responsible for fd {1!a}'.fomat(self, fd))
+         raise ValueError('{!a} is not responsible for fd {!a}'.fomat(self, fd))
       
       if (not self.cleaning_up):
-         self.log(30, 'UDP socket of {0!a} is unexpectedly being closed.' % (self,))
+         self.log(30, 'UDP socket of {!a} is unexpectedly being closed.' % (self,))
          self.sock = None
          # Don't raise an exception here; this is most likely being called as a
          # result of another exception, which we wouldn't want to mask.
@@ -765,6 +757,7 @@ class DNSLookupManager:
 
    def build_simple_query(self, *args, **kwargs):
       return SimpleDNSQuery(self, *args, **kwargs)
+
 
 class DNSLookupResult:
    def __init__(self, query_name, answers, additional_records):
@@ -915,12 +908,12 @@ def _module_selftest_network(ns_addr):
    query_data = DNSFrame(questions=[DNSQuestion(DomainName(b'www.example.net'), QTYPE_ALL)], id=1236).binary_repr()
 
    s.sendto(query_data, ns_addr)
-   print('Sending query {0!a} to {1!a}...'.format(query_data, ns_addr,))
+   print('Sending query {!a} to {!a}...'.format(query_data, ns_addr,))
    (in_data, in_addr) = s.recvfrom(512)
-   print('Got reply {0!a} from {1!a}.'.format(in_data, in_addr))
+   print('Got reply {!a} from {!a}.'.format(in_data, in_addr))
    
    response_data = DNSFrame.build_from_binstream(BytesIO(in_data))
-   print('Data: {0!a}'.format(response_data))
+   print('Data: {!a}'.format(response_data))
    return True
 
 
@@ -932,7 +925,7 @@ class _StatefulLookupTester_1:
       self.ed.event_loop()
    
    def result_handler(self, dns_query, dns_data):
-      print('Got response: {0!a}'.format(dns_data,))
+      print('Got response: {!a}'.format(dns_data,))
       self.ed.shutdown()
 
 class _StatefulLookupTester_2:
@@ -943,8 +936,8 @@ class _StatefulLookupTester_2:
       self.ed.event_loop()
    
    def result_handler(self, dns_query, dns_data):
-      print('Got response: {0!a}'.format(dns_data,))
-      print('Ipv4/IPv6 addresses: {0!a}'.format(dns_data.get_rr_ip_addresses(),))
+      print('Got response: {!a}'.format(dns_data,))
+      print('Ipv4/IPv6 addresses: {!a}'.format(dns_data.get_rr_ip_addresses(),))
       self.ed.shutdown()
 
 
