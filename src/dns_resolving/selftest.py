@@ -71,13 +71,22 @@ def _module_selftest_network(ns_addr):
 
 class _StatefulLookupTester_1:
    def __init__(self, ed, blm, question):
+      self.q = question
       self.ed = ed
       self.la = blm(self.ed)
-      self.query = DNSQuery(self.la, self.result_handler, id=42, question=question, timeout=20)
+      self.query = DNSQuery(self.la, self.rh1, id=42, question=question, timeout=20)
       self.ed.event_loop()
    
-   def result_handler(self, dns_query, dns_data):
-      print('Got response: {!a}'.format(dns_data,))
+   def rh1(self, dns_query, dns_data):
+      print('1-0: Got response: {!a}'.format(dns_data))
+      self.la.sock_tcp.close()
+      def q2():
+         self.query = DNSQuery(self.la, self.rh2, id=43, question=self.q, timeout=20)
+      
+      self.ed.set_timer(0, q2)
+
+   def rh2(self, dns_query, dns_data):
+      print('1-1: Got response: {!a}'.format(dns_data))
       self.ed.shutdown()
 
 class _StatefulLookupTester_2:

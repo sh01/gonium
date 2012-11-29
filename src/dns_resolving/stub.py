@@ -436,13 +436,11 @@ class DNSLookupManager:
       s.process_msgs = self._process_tcp_msgs
    
    def _process_tcp_connect(self, conn):
-      self._have_tcp_connection = True
       for query in self._qq_tcp:
         self.sock_tcp.send_query(query)
       self._qq_tcp.clear()
 
    def _process_tcp_close(self):
-      self._have_tcp_connection = False
       self.sock_tcp = None
    
    def _process_tcp_msgs(self, msgs):
