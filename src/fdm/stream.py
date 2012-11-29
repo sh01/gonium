@@ -77,6 +77,9 @@ class AsyncDataStream:
    def __init__(self, *args, run_start=True, **kwargs):
       self.state = self.CS_DOWN
       self._outbuf = deque()
+      self.ssl_handshake_pending = None
+      self.ssl_callback = None
+      
       if (run_start):
          self.start(*args, **kwargs)
 
@@ -114,8 +117,6 @@ class AsyncDataStream:
       self._inbuf_size_max = inbufsize_max
       self._index_in = 0        # part of buffer filled with current data
       self.state = self.CS_UP
-      self.ssl_handshake_pending = None
-      self.ssl_callback = None
    
    @property
    def connected(self):
@@ -148,8 +149,7 @@ class AsyncDataStream:
          connect(ip)
          
    
-   def connect_async_sock(self, ed, addr, port, connect_callback=None, *,
-      type_:int=SOCK_STREAM, proto:int=0, bind_target=None, **kwargs):
+   def connect_async_sock(self, ed, addr, port, connect_callback=None, *, type_:int=SOCK_STREAM, proto:int=0, bind_target=None, **kwargs):
       """Nonblockingly open outgoing SOCK_STREAM/SOCK_SEQPACKET connection."""
       def connect_process():
          err = sock.getsockopt(SOL_SOCKET, SO_ERROR)
@@ -191,6 +191,7 @@ class AsyncDataStream:
             pass
          else:
             return
+      
       self.start(ed, sock, read_r=False, **kwargs)
       self.state = self.CS_CONNECT   
       self._fw.process_writability = connect_process
