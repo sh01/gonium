@@ -69,7 +69,13 @@ class DNSQuestion(ValueVerifier, DNSReprBase):
       """Return binary representation of this question section"""
       return (self.name.binary_repr() + struct.pack(b'>HH', self.type, 
          self.rclass))
-   
+
+   def __eq__(self, other):
+      return (self.binary_repr() == other.binary_repr())
+   def __ne__(self, other):
+      return not (self == other)
+   def __hash__(self):
+      return hash(self.binary_repr())
 
 
 class ResourceRecord(ValueVerifier, DNSReprBase):
@@ -250,6 +256,13 @@ class DNSQuery:
       if not (timeout is None):
          self.tt = self.la.event_dispatcher.set_timer(timeout, self.timeout_process, parent=self)
    
+   def __eq__(self, other):
+      return ((self.id == other.id) and (self.question == other.question))
+   def __ne__(self, other):
+      return not (self == other)
+   def __hash__(self):
+      return hash((self.id, self.question))
+
    def timeout_process(self):
       """Process a timeout on this query"""
       self.tt = None
@@ -263,11 +276,15 @@ class DNSQuery:
       """Call callback handler with dummy results indicating lookup failure"""
       self.result_handler(self, None)
    
+   def is_response(self, response):
+      """Check a response for whether it answers our query. Do not process it further either way."""
+      return (tuple(response.questions) == (self.question,))
+   
    def potential_response_process(self, response):
       """Check a response for whether it answers our query, and if so process it.
       
       Returns whether the response was accepted."""
-      if (tuple(response.questions) != (self.question,)):
+      if (not self.is_response(response)):
          return False
       
       self.tt.cancel()
@@ -346,23 +363,28 @@ class DNSTCPStream(AsyncDataStream):
       bytes_left = len(data)
       msgs = []
       while (bytes_left > 2):
-        l = struct.unpack('>H', data[bytes_used:bytes_used+2])
+        (l,) = struct.unpack('>H', data[bytes_used:bytes_used+2])
         wb = l + 2
         if (wb > bytes_left):
           self.size = wb
           break
-        msgs.append(data[bytes_used:bytes_used+wb])
+        msgs.append(data[bytes_used+2:bytes_used+wb])
         bytes_used += wb
+        bytes_left -= wb
       else:
          self.size = 2
-      self.discard_bytes(bytes_used)
+      self.discard_inbuf_data(bytes_used)
       
       if (msgs):
          self.process_msgs(msgs)
 
    def send_query(self, query):
-      self.send_bytes(query.get_dns_frame().binary_repr())
-
+      frame_data = query.get_dns_frame().binary_repr()
+      try:
+        header = struct.pack('>H', (len(frame_data)))
+      except struct.error as exc:
+        raise ValueError('Too much data.') from struct.error
+      self.send_bytes((header, frame_data))
 
 
 class DNSLookupManager:
@@ -396,7 +418,11 @@ class DNSLookupManager:
    
    def _send_tcp(self, query):
       if (self._have_tcp_connection()):
-        self.sock_tcp.send_query(query)
+        try:
+          self.sock_tcp.send_query(query)
+        except ValueError:
+          self.log(40, '{!a} unable to send query over TCP:'.format(self), exc_info=True)
+          self.event_dispatcher.set_timer(0, query.timeout_process, parent=self, interval_relative=False)
       else:
         if (self.sock_tcp is None):
           self._make_tcp_sock()
@@ -404,27 +430,30 @@ class DNSLookupManager:
         return 
 
    def _make_tcp_sock(self):
-      self.sock_tcp = rv = DNSTCPStream(run_start=False)
-      rv.process_close = self._process_tcp_close
-      rv.connect_async_sock(self.ns_addr[0], int(self.ns_addr[1]), connect_callback=self._process_tcp_connect)
+      self.sock_tcp = s = DNSTCPStream(run_start=False)
+      s.process_close = self._process_tcp_close
+      s.connect_async_sock(self.event_dispatcher, ip_address_build(self.ns_addr[0]), self.ns_addr[1], connect_callback=self._process_tcp_connect)
+      s.process_msgs = self._process_tcp_msgs
    
-   def _process_tcp_connect(self):
+   def _process_tcp_connect(self, conn):
+      self._have_tcp_connection = True
       for query in self._qq_tcp:
         self.sock_tcp.send_query(query)
       self._qq_tcp.clear()
 
    def _process_tcp_close(self):
+      self._have_tcp_connection = False
       self.sock_tcp = None
    
    def _process_tcp_msgs(self, msgs):
       for msg in msgs:
-        self.data_process(msg, self.ns_addr)
+        self.data_process(msg, self.ns_addr, tcp=True)
    
-   def data_process(self, data, source):
+   def data_process(self, data, source, tcp=False):
       try:
          dns_frame = DNSFrame.build_from_binstream(BytesIO(data))
       except ValueError:
-         self.log(30, '{!a} got udp frame {!a} not parsable as dns data from {!a}. Ignoring. Parsing error was:'.format(self, data, source), exc_info=True)
+         self.log(30, '{!a} got frame {!a} not parsable as dns data from {!a}. Ignoring. Parsing error was:'.format(self, bytes(data), source), exc_info=True)
          return
       
       if (source != self.ns_addr):
@@ -433,21 +462,46 @@ class DNSLookupManager:
       
       if (not (dns_frame.header.id in self.queries)):
          self.log(30, '{!a} got spurious (unexpected id) query dns response {!a} from {!a}. Ignoring.'.format(self, dns_frame, source))
+         return
+      
+
+      def log_spurious():
+         self.log(30, '{!a} got spurious (unexpected question section) query dns response {!a} from {!a}. Ignoring.'.format(self, dns_frame, source))
+      if (dns_frame.header.truncation):
+         if (tcp):
+            self.log(30, '{!a} got truncated dns response {!a} over TCP from {!a}. Ignoring.'.format(self, dns_frame, source))
+            return
+         self.log(25, '{!a} got truncated dns response {!a} from {!a}. Retrying over TCP.'.format(self, dns_frame, source))
+
+         for query in self.queries[dns_frame.header.id]:
+            if (query.is_response(dns_frame)):
+               self._send_tcp(query)
+               break
+         else:
+            log_spurious()
+         return
       
       for query in self.queries[dns_frame.header.id][:]:
          if (query.potential_response_process(dns_frame)):
             self.queries[dns_frame.header.id].remove(query)
             break
       else:
-         self.log(30, '{!a} got spurious (unexpected question section) query dns response {!a} from {!a}. Ignoring.'.format(self, dns_frame, source))
+         log_spurious()
    
    def query_forget(self, query):
       """Forget outstanding dns query"""
       self.queries[query.id].remove(query)
+      try:
+         self._qq_tcp.remove(query)
+      except ValueError:
+         pass
    
    def id_suggestion_get(self):
       """Return suggestion for a frame id to use"""
-      return random.randint(0, 2**16-1)
+      while True:
+        rv = random.randint(0, 2**16-1)
+        if not (rv in self.queries):
+          return rv
    
    def query_add(self, query):
       """Register new outstanding dns query and send query frame"""
@@ -465,13 +519,13 @@ class DNSLookupManager:
       
       self.sock_udp.fl.sendto(dns_frame_str, self.ns_addr)
    
-   def close_process(self, fd):
+   def close_process(self):
       """Process close of UDP socket"""
-      if not (fd == self.sock_udp.fd):
-         raise ValueError('{!a} is not responsible for fd {!a}'.fomat(self, fd))
+      #if not (fd == self.sock_udp.fd):
+      #   raise ValueError('{!a} is not responsible for fd {!a}'.fomat(self, fd))
       
       if (not self.cleaning_up):
-         self.log(30, 'UDP socket of {!a} is unexpectedly being closed.' % (self,))
+         self.log(30, 'UDP socket of {!a} is unexpectedly being closed.'.format(self))
          self.sock_udp = None
          # Don't raise an exception here; this is most likely being called as a
          # result of another exception, which we wouldn't want to mask.
@@ -486,7 +540,8 @@ class DNSLookupManager:
          for query in query_list[:]:
             query.failure_report()
             query.clean_up()
-      self.queries = {}
+      self.queries.clear()
+      self._qq_tcp.clear()
       self.cleaning_up = False
 
    def build_simple_query(self, *args, **kwargs):
