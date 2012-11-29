@@ -647,7 +647,11 @@ class SimpleDNSQuery:
                valid_ars.append(ar)
       
       res = DNSLookupResult(self.query_name, valid_results, valid_ars)
-      self.result_handler(self, res)
+      try:
+        self.result_handler(self, res)
+      except BaseException as exc:
+         self.log(40, 'Error on DNS lookup result processing for {!a}:'.format(res), exc_info=True)
+
       self.result_handler = None
       self.lookup_manager = None
       self.queries = ()
