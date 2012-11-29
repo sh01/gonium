@@ -26,7 +26,7 @@ from .base import *
 from .. import ip_address
 from ..ip_address import ip_address_build
 from ..fdm.packet import AsyncPacketSock
-
+from ..fdm.stream import AsyncDataStream
 
 # ----------------------------------------------------------------------------- question / RR sections
 
@@ -336,6 +336,35 @@ class ResolverConfig:
       return DNSLookupManager(ed, ns_addr=self.get_addr())
 
 
+class DNSTCPStream(AsyncDataStream):
+   def __init__(self, *args, **kwargs):
+      super().__init__(*args, **kwargs)
+      self.size = 2
+   
+   def process_input(self, data):
+      bytes_used = 0
+      bytes_left = len(data)
+      msgs = []
+      while (bytes_left > 2):
+        l = struct.unpack('>H', data[bytes_used:bytes_used+2])
+        wb = l + 2
+        if (wb > bytes_left):
+          self.size = wb
+          break
+        msgs.append(data[bytes_used:bytes_used+wb])
+        bytes_used += wb
+      else:
+         self.size = 2
+      self.discard_bytes(bytes_used)
+      
+      if (msgs):
+         self.process_msgs(msgs)
+
+   def send_query(self, query):
+      self.send_bytes(query.get_dns_frame().binary_repr())
+
+
+
 class DNSLookupManager:
    logger = logging.getLogger('gonium.dns_resolving.DNSLookupManager')
    log = logger.log
@@ -577,33 +606,4 @@ class SimpleDNSQuery:
       self.queries = ()
       self.result_handler = None
       self.lookup_manager = None
-
-
-from ..fdm.stream import AsyncDataStream
-class DNSTCPStream(AsyncDataStream):
-   def __init__(self, *args, **kwargs):
-      super().__init__(*args, **kwargs)
-      self.size = 2
-   
-   def process_input(self, data):
-      bytes_used = 0
-      bytes_left = len(data)
-      msgs = []
-      while (bytes_left > 2):
-        l = struct.unpack('>H', data[bytes_used:bytes_used+2])
-        wb = l + 2
-        if (wb > bytes_left):
-          self.size = wb
-          break
-        msgs.append(data[bytes_used:bytes_used+wb])
-        bytes_used += wb
-      else:
-         self.size = 2
-      self.discard_bytes(bytes_used)
-      
-      if (msgs):
-         self.process_msgs(msgs)
-
-   def send_query(self, query):
-      self.send_bytes(query.get_dns_frame().binary_repr())
 
