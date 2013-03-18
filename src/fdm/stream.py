@@ -79,6 +79,7 @@ class AsyncDataStream:
       self._outbuf = deque()
       self.ssl_handshake_pending = None
       self.ssl_callback = None
+      self._fw = None
       
       if (run_start):
          self.start(*args, **kwargs)
