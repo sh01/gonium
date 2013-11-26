@@ -205,8 +205,7 @@ def _donothing(*args, **kwargs):
 
 
 class _FDWrap:
-   __slots__ = ('fd', 'process_readability', 'process_writability',
-      'process_hup', 'process_close', '_ed', '_fl')
+   __slots__ = ('fd', 'process_readability', 'process_writability', 'process_close', '_ed', '_fl')
    """FD associated monitored by a specific ED. Events are returned by calling
       attributes:
       process_readability() for READ
