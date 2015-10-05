@@ -64,12 +64,16 @@ class InotifyWatch:
     if (fd < 0):
       raise SystemError('inotify_init() failed.')
     fcntl(fd, F_SETFL, O_NONBLOCK)
-    
+
+    # The filelike will handle closing our fd on destruction.
     self._fl = fl = open(fd, 'rb')
     self._fw = fw = ed.fd_wrap(fd, fl=fl)
     self._fw.process_readability = self._process_readability
     self._fw.process_close = self._process_close
     fw.read_r()
+
+  def process_event(self, *args, **kwargs):
+    raise NotImplementedError('process_event(*{!r}, **{!r})'.format(args, kwargs))
 
   def add_watch(self, pathname, mask):
     wd = inotify_add_watch(self._fw.fd, pathname, mask)
