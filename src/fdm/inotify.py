@@ -79,6 +79,7 @@ class InotifyWatch:
     wd = inotify_add_watch(self._fw.fd, pathname, mask)
     if (wd < 0):
       raise ValueError('inotify_add_watch(, {!r}, {!r}) failed.'.format(pathname, mask))
+    return wd
 
   def _process_readability(self):
     from sys import byteorder as bo
