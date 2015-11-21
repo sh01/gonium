@@ -128,7 +128,11 @@ class AsyncDataStream:
       self.state = self.CS_LOOKUP
       def connect(addr):
          self._dst_ip = addr
-         self.connect_async_sock(sa.ed, addr, port, **kwargs)
+         try:
+            self.connect_async_sock(sa.ed, addr, port, **kwargs)
+         except Exception as exc:
+            _log(30, 'Unable to connect to {!a}: {!a}'.format(addr, str(exc)))
+            sa.ed.set_timer(0, self._process_close, interval_relative=False)
       
       def process_lookup_results(query, results):
          if (results is None):
