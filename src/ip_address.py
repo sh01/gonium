@@ -105,6 +105,8 @@ class IPAddressBase(object):
       return (int(self) == int(other))
    def __lt__(self, other):
       return (int(self) < int(other))
+   def __hash__(self):
+      return hash(int(self))
 
    def __repr__(self):
       return '{0}.fromstring({1!a})'.format(self.__class__.__name__, self.__str__())

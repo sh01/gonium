@@ -125,9 +125,10 @@ class DomainName(bytes):
    # Case-insensitive comparison as manadated by RFC 1035.
    def __eq__(self, other):
       return (self.lower() == other.lower())
-
    def __lt__(self, other):
       return (self.lower() < other.lower())
+   def __hash__(self):
+      return hash(self.lower())
 
 
 class DNSReprBase(object):
