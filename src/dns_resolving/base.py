@@ -137,9 +137,6 @@ class DNSReprBase(object):
 
    def __eq__(self, other):
       return (self.binary_repr() == other.binary_repr())
-   
-   def __neq__(self, other):
-      return (not (self == other))
 
 # ----------------------------------------------------------------------------- RDATA sections
 
