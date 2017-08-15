@@ -1,5 +1,5 @@
-#!/usr/bin/python
-#Copyright 2004, 2005, 2006, 2012 Sebastian Hagen
+#!/usr/bin/python3
+#Copyright 2004, 2005, 2006, 2012, 2017 Sebastian Hagen
 # This file is part of gonium.
 #
 # gonium is free software; you can redistribute it and/or modify
@@ -16,6 +16,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
+import functools
 import socket
 from socket import inet_pton, inet_ntop, AF_INET, AF_INET6
 import struct
@@ -46,6 +47,7 @@ def ip_address_build(ip_data):
    raise ValueError('Unable to convert argument {!a} to a v4 or v6 ip address.'.format(ip_data))
 
 
+@functools.total_ordering
 class IPAddressBase(object):
    __slots__ = ['ip']
    
@@ -98,15 +100,11 @@ class IPAddressBase(object):
       
    def __nonzero__(self):
       return bool(self.ip)
-      
-   def __cmp__(self, other):
-      (self, other) = (int(self), int(other))
-      if (self < other):
-         return -1
-      elif (other < self):
-         return 1
-      else:
-         return 0
+
+   def __eq__(self, other):
+      return (int(self) == int(other))
+   def __lt__(self, other):
+      return (int(self) < int(other))
 
    def __repr__(self):
       return '{0}.fromstring({1!a})'.format(self.__class__.__name__, self.__str__())

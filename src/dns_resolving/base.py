@@ -1,5 +1,5 @@
-#!/usr/bin/env python
-#Copyright 2007,2008,2012 Sebastian Hagen
+#!/usr/bin/env python3
+#Copyright 2007,2008,2012,2017 Sebastian Hagen
 # This file is part of gonium.
 #
 # gonium is free software; you can redistribute it and/or modify
@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import functools
 import socket
 import struct
 
@@ -33,6 +34,7 @@ QTYPE_ALL = 255
 QTYPES_SPECIAL = set((QTYPE_AXFR, QTYPE_MAILB, QTYPE_MAILA, QTYPE_ALL))
 
 
+@functools.total_ordering
 class DomainName(bytes):
    NAME_LENGTH_LIMIT = 255
    LABEL_LENGTH_LIMIT = 63
@@ -120,15 +122,12 @@ class DomainName(bytes):
       """Return binary representation of this domain name in DNS protocol"""
       return self.binstring
 
-   def __cmp__(self, other):
-      """Case-insensitive comparison as manadated by RFC 1035"""
-      s1 = str(self.lower())
-      s2 = str(other.lower())
-      if (s1 < s2):
-         return -1
-      if (s1 > s2):
-         return 1
-      return 0
+   # Case-insensitive comparison as manadated by RFC 1035.
+   def __eq__(self, other):
+      return (self.lower() == other.lower())
+
+   def __lt__(self, other):
+      return (self.lower() < other.lower())
 
 
 class DNSReprBase(object):
