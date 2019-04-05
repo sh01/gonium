@@ -453,8 +453,7 @@ class AsyncDataStream:
       self.fl.close()
       self.fl = None
       try:
-         ssl_sock = ssl.SSLSocket(sock=sock_tmp, *ssl_args,
-            do_handshake_on_connect=False, **ssl_kwargs)
+         ssl_sock = ssl.wrap_socket(sock=sock_tmp, *ssl_args, do_handshake_on_connect=False, **ssl_kwargs)
       finally:
          sock_tmp.close()
       
