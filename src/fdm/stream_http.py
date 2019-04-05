@@ -47,12 +47,13 @@ def _urlsplit2hostport(us):
 _EOL = b'\x0d\x0a'
 class Query:
   PROTO_VER = b'HTTP/1.1'
-  def __init__(self, url, method=b'GET'):
+  def __init__(self, url, method=b'GET', hdrs={}):
     from urllib.parse import urlsplit
     if isinstance(url, str):
       url = url.encode('ascii')
     self.url = url
     self.method = method
+    self.hdrs = hdrs
 
     us = urlsplit(url)
     self.lp = _local_from_urlsplit(us)
@@ -64,8 +65,10 @@ class Query:
       self.method, b' ', self.lp, b' ', self.PROTO_VER, _EOL,
       b'Host: ', self.host, _EOL,
       b'Connection: close', _EOL,
-      _EOL
     ]
+    for k,v in self.hdrs.items():
+      f.extend([k, b': ', v, _EOL])
+    f.append(_EOL)
     return b''.join(f)
 
 class AsyncHTTPStream(AsyncDataStream):
@@ -97,7 +100,7 @@ class AsyncHTTPStream(AsyncDataStream):
     hdrs = {}
     for line in hdr_split[1:]:
       (k, v) = line.split(b':', 1)
-      hdrs[k] = v.lstrip()
+      hdrs[k.lower().strip()] = v.lstrip()
     self.process_hdrs(status_code, hdrs)
     # Restore non-header handler
     s = super()._process_input1
@@ -107,19 +110,19 @@ class AsyncHTTPStream(AsyncDataStream):
       s()
     
   @classmethod
-  def build_by_URL(cls, sa, query):
+  def build_by_query(cls, sa, query):
     self = cls(sa.ed, run_start=False)
 
     def connect_cb(*args):
-      print('Got connect!')
       self.send_request(query)
     
     if (query.is_ssl):
       self.do_ssl_handshake(connect_cb)
       connect_cb = None
-      
-    self.connect_async_sock_bydns(sa, query.host, query.port, connect_callback=connect_cb)
-    return self
+
+    def start():
+      self.connect_async_sock_bydns(sa, query.host, query.port, connect_callback=connect_cb)
+    return self, start
 
 
 def _selftest():
@@ -147,7 +150,8 @@ def _selftest():
   out.write('==== AsyncHTTPStream test ====\n')
 
   q = Query(url.encode('ascii'))
-  s = T.build_by_URL(sa, q)
+  s, start = T.build_by_query(sa, q)
+  start()
   sa.ed.event_loop()
 
 if __name__ == '__main__':
