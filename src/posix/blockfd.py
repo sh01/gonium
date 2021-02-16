@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2009 Sebastian Hagen
+#Copyright 2009,2020,2021 Sebastian Hagen
 # This file is part of gonium.
 #
 # gonium is free software; you can redistribute it and/or modify
@@ -22,8 +22,8 @@
 
 import logging
 
-from ._blockfd import DataTransferDispatcher as _DataTransferDispatcher, \
-   DataTransferRequest
+from ._blockfd import DataTransferDispatcher as _DataTransferDispatcher, DataTransferRequest
+from ..ip_address import IPAddressBase, ip_address_build
 
 class DataTransferDispatcher(_DataTransferDispatcher):
    logger = logging.getLogger('DataTransferDispatcher')
@@ -429,7 +429,8 @@ class _ModuleSelfTester:
          
       
       s_s.connect_process = cp
-      s_out = AsyncDataStream.build_sock_connect(self.ed, saddr)
+      s_out = AsyncDataStream(run_start=False)
+      s_out.connect_async_sock(self.ed, addr=ip_address_build(saddr[0]), port=saddr[1])
       
       ed.event_loop()
       
@@ -458,13 +459,19 @@ class _ModuleSelfTester:
          s_in.process_input = pi
       
       else:
-         s_in = AsyncDataStream.build_sock_connect(self.ed, saddr)
+         s_in = AsyncDataStream(self.ed, s_c1)
+         s_in.connect_async_sock(self.ed, addr=ip_address_build(saddr[0]), port=saddr[1])
          s_in.process_input = pi
          ed.event_loop()
-      
+
+      def err_input(data):
+         if (len(data) > 0):
+           self.log(40, 'Got data: {!a}.'.format(bytes(data)))
+           raise StandardError('Too much data.')
+      s_out.process_input = err_input
+
       if (use_ssl):
-         s_in.do_ssl_handshake(dcisd, server_side=True,
-            certfile=caf_crt.name, keyfile=caf_key.name)
+         s_in.do_ssl_handshake(dcisd, server_side=True, certfile=caf_crt.name, keyfile=caf_key.name)
          s_out.do_ssl_handshake(dcisd)
       
       self.log(20, 'Transferring data ...')

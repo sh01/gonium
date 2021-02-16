@@ -360,9 +360,13 @@ class AsyncDataStream:
             if (buf.errno in self._SOCK_ERRNO_FATAL):
                raise CloseFD()
             buf.get_errors()
-         
+
+         from ssl import SSLWantWriteError
          try:
             rv = self._out(buf)
+         except SSLWantWriteError as exc:
+            self._outbuf.appendleft(buf)
+            break
          except sockerr as exc:
             self._outbuf.appendleft(buf)
             if (exc.errno in self._SOCK_ERRNO_TRANS):
