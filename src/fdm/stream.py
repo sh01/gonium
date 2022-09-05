@@ -204,7 +204,7 @@ class AsyncDataStream:
 
       return self
    
-   def send_data(self, buffers:collections.Sequence, *args, **kwargs):
+   def send_data(self, buffers:collections.abc.Sequence, *args, **kwargs):
       """Like send_bytes(), but encodes any strings with self.output_encoding."""
       enc = self.output_encoding
       def encode(buf):
@@ -214,7 +214,7 @@ class AsyncDataStream:
       
       self.send_bytes(map(encode, buffers), *args, **kwargs)
    
-   def send_bytes(self, buffers:collections.Sequence, flush=True):
+   def send_bytes(self, buffers:collections.abc.Sequence, flush=True):
       """Append set of buffers to pending output and attempt to push.
          Buffers elements must be bytes, bytearray, memoryview or similar."""
       assert not (isinstance(buffers, (bytes, bytearray)))
@@ -580,7 +580,7 @@ class AsyncDataStream:
 
 class AsyncLineStream(AsyncDataStream):
    """Class for asynchronously accessing line-based bytestreams"""
-   def __init__(self, ed=None, filelike=None, lineseps:collections.Set=(b'\n',), **kwargs):
+   def __init__(self, ed=None, filelike=None, lineseps:collections.abc.Set=(b'\n',), **kwargs):
       AsyncDataStream.__init__(self, ed, filelike, **kwargs)
       self._inbuf_index_l = 0
       self._ls = lineseps

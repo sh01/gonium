@@ -36,7 +36,7 @@ Basic usage:
 """
 
 import logging
-from collections import Callable
+from collections.abc import Callable
 from copy import copy as copy_
 
 _logger = logging.getLogger('gonium.event_multiplexing')

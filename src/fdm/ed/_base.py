@@ -21,7 +21,8 @@ import math
 import numbers
 import os
 import threading
-from collections import Callable
+
+from collections.abc import Callable
 from errno import EBADF
 from heapq import heappush, heapify
 from time import time as time_

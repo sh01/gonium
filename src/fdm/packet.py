@@ -52,7 +52,7 @@ class AsyncPacketSock:
             break
          self.process_input(data, addrinfo)
 
-   def send_data(self, buffers:collections.Sequence, target):
+   def send_data(self, buffers:collections.abc.Sequence, target):
       """Like send_bytes(), but encodes any strings with self.output_encoding."""
       enc = self.output_encoding
       def encode(buf):
@@ -61,7 +61,7 @@ class AsyncPacketSock:
          return buf
       self.send_bytes(map(encode,buffers), *args, **kwargs)
 
-   def send_bytes(self, buffers:collections.Sequence, target):
+   def send_bytes(self, buffers:collections.abc.Sequence, target):
       """Send specified data to specified target"""
       for buf in buffers:
          self.fl.sendto(buf, target)
