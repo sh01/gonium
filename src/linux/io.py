@@ -64,7 +64,7 @@ class LinuxAIOManager(IOManager):
                continue
             _log(40, 'Exception in AIO handler {0} on Request {1}:'.format(req.callback, req), exc_info=True)
    
-   def io(self, req_s:collections.Sequence):
+   def io(self, req_s:collections.abc.Sequence):
       """Request IO action
       
       req_s: Sequence of LinuxAIORequest objects

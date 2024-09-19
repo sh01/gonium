@@ -60,7 +60,7 @@ class EAIOManager(AIOManager):
       )
       AIOManager.__init__(self, *args, **kwargs)
    
-   def _handle_signals(self, si_l:collections.Sequence):
+   def _handle_signals(self, si_l:collections.abc.Sequence):
       """Deal with signals indicating AIO completion"""
       sigvals = [si.value_int for si in si_l if (si.signo == self.AIO_SIGNAL)]
       if (not sigvals):
@@ -85,7 +85,7 @@ class EAIOManager(AIOManager):
       """Deal with lost signals"""
       self._process_finished_requests(self.suspend(0))
    
-   def io(self, req_s:collections.Sequence):
+   def io(self, req_s:collections.abc.Sequence):
       """Request IO action
       
       req_s: Sequence of EAIORequest objects
