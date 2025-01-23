@@ -447,13 +447,14 @@ class DNSLookupManager:
       for msg in msgs:
         self.data_process(msg, self.ns_addr, tcp=True)
    
-   def data_process(self, data, source, tcp=False):
+   def data_process(self, data, source_, tcp=False):
       try:
          dns_frame = DNSFrame.build_from_binstream(BytesIO(data))
       except ValueError:
          self.log(30, '{!a} got frame {!a} not parsable as dns data from {!a}. Ignoring. Parsing error was:'.format(self, bytes(data), source), exc_info=True)
          return
-      
+
+      source = source_[:2]
       if (source != self.ns_addr):
          self.log(30, '{!a} got spurious udp frame from {!a}; target NS is at {!a}. Ignoring.'.format(self, source, self.ns_addr))
          return
